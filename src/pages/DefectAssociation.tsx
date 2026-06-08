@@ -16,6 +16,7 @@ import {
   Space,
   List,
   Divider,
+  Empty,
 } from 'antd'
 import {
   BugOutlined,
@@ -24,18 +25,28 @@ import {
   DeleteOutlined,
   LinkOutlined,
   SearchOutlined,
-  AppstoreOutlined,
   ExportOutlined,
+  AppstoreOutlined,
+  CloseOutlined,
 } from '@ant-design/icons'
 import { useAppStore } from '@/store'
-import type { Defect } from '@/types'
+import type { Defect, TestCase } from '@/types'
 
 const { Title, Text } = Typography
 const { Option } = Select
 const { TextArea } = Input
 
 function DefectAssociation() {
-  const { defects, cases, addDefect, updateDefect, deleteDefect } = useAppStore()
+  const {
+    defects,
+    cases,
+    addDefect,
+    updateDefect,
+    deleteDefect,
+    associateCaseToDefect,
+    removeCaseFromDefect,
+  } = useAppStore()
+
   const [modalVisible, setModalVisible] = useState(false)
   const [editingDefect, setEditingDefect] = useState<Defect | null>(null)
   const [searchKeyword, setSearchKeyword] = useState('')
@@ -45,6 +56,7 @@ function DefectAssociation() {
     visible: boolean
     defect: Defect | null
   }>({ visible: false, defect: null })
+  const [caseSearch, setCaseSearch] = useState('')
 
   const filteredDefects = defects.filter((d) => {
     const matchKeyword =
@@ -53,6 +65,14 @@ function DefectAssociation() {
       d.title.toLowerCase().includes(searchKeyword.toLowerCase())
     const matchStatus = statusFilter === 'all' || d.status === statusFilter
     return matchKeyword && matchStatus
+  })
+
+  const filteredCases = cases.filter((c) => {
+    if (!caseSearch) return true
+    return (
+      c.title.toLowerCase().includes(caseSearch.toLowerCase()) ||
+      c.module.toLowerCase().includes(caseSearch.toLowerCase())
+    )
   })
 
   const handleAdd = () => {
@@ -88,8 +108,21 @@ function DefectAssociation() {
     message.success('删除成功')
   }
 
-  const handleAssociate = (defect: Defect) => {
+  const handleOpenAssociate = (defect: Defect) => {
     setAssociateModal({ visible: true, defect })
+    setCaseSearch('')
+  }
+
+  const handleAssociateCase = (caseId: string) => {
+    if (!associateModal.defect) return
+    associateCaseToDefect(associateModal.defect.id, caseId)
+    message.success('关联成功')
+  }
+
+  const handleRemoveCase = (caseId: string) => {
+    if (!associateModal.defect) return
+    removeCaseFromDefect(associateModal.defect.id, caseId)
+    message.success('已移除关联')
   }
 
   const getSeverityTag = (severity: string) => {
@@ -124,6 +157,16 @@ function DefectAssociation() {
     return <Tag color={colorMap[status]}>{textMap[status] || status}</Tag>
   }
 
+  const getAssociatedCases = (defect: Defect): TestCase[] => {
+    return defect.caseIds
+      .map((cid) => cases.find((c) => c.id === cid))
+      .filter((c): c is TestCase => c !== undefined)
+  }
+
+  const getAvailableCases = (defect: Defect): TestCase[] => {
+    return filteredCases.filter((c) => !defect.caseIds.includes(c.id))
+  }
+
   const columns = [
     {
       title: '缺陷编号',
@@ -140,7 +183,7 @@ function DefectAssociation() {
       title: '缺陷标题',
       dataIndex: 'title',
       key: 'title',
-      width: 250,
+      width: 280,
       ellipsis: true,
     },
     {
@@ -162,7 +205,9 @@ function DefectAssociation() {
       dataIndex: 'caseIds',
       key: 'caseIds',
       width: 100,
-      render: (caseIds: string[]) => caseIds.length,
+      render: (caseIds: string[]) => (
+        <Tag color={caseIds.length > 0 ? 'blue' : 'default'}>{caseIds.length} 个</Tag>
+      ),
     },
     {
       title: '创建时间',
@@ -173,14 +218,20 @@ function DefectAssociation() {
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 220,
+      fixed: 'right' as const,
       render: (_: unknown, record: Defect) => (
         <Space size="small">
-          <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => handleAssociate(record)}>
+          <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => handleOpenAssociate(record)}>
             关联用例
           </Button>
           {record.url && (
-            <Button type="link" size="small" icon={<ExportOutlined />} onClick={() => window.open(record.url, '_blank')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ExportOutlined />}
+              onClick={() => window.open(record.url, '_blank')}
+            >
               打开
             </Button>
           )}
@@ -201,6 +252,10 @@ function DefectAssociation() {
   const fixedCount = defects.filter((d) => d.status === 'fixed').length
   const criticalCount = defects.filter((d) => d.severity === 'critical').length
 
+  const currentDefect = associateModal.defect
+    ? defects.find((d) => d.id === associateModal.defect?.id)
+    : null
+
   return (
     <div>
       <div className="page-header">
@@ -219,9 +274,7 @@ function DefectAssociation() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <BugOutlined style={{ fontSize: 28, color: '#ff4d4f' }} />
               <div>
-                <div style={{ fontSize: 24, fontWeight: 600, color: '#ff4d4f' }}>
-                  {defects.length}
-                </div>
+                <div style={{ fontSize: 24, fontWeight: 600, color: '#ff4d4f' }}>{defects.length}</div>
                 <div style={{ color: '#8c8c8c' }}>缺陷总数</div>
               </div>
             </div>
@@ -296,9 +349,7 @@ function DefectAssociation() {
                 !!!
               </div>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 600, color: '#ff4d4f' }}>
-                  {criticalCount}
-                </div>
+                <div style={{ fontSize: 24, fontWeight: 600, color: '#ff4d4f' }}>{criticalCount}</div>
                 <div style={{ color: '#8c8c8c' }}>严重缺陷</div>
               </div>
             </div>
@@ -329,6 +380,7 @@ function DefectAssociation() {
           columns={columns}
           dataSource={filteredDefects}
           rowKey="id"
+          scroll={{ x: 1100 }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -410,75 +462,125 @@ function DefectAssociation() {
         open={associateModal.visible}
         onCancel={() => setAssociateModal({ visible: false, defect: null })}
         footer={[
-          <Button key="cancel" onClick={() => setAssociateModal({ visible: false, defect: null })}>
+          <Button key="close" onClick={() => setAssociateModal({ visible: false, defect: null })}>
             关闭
           </Button>,
         ]}
-        width={700}
+        width={800}
+        styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
       >
-        {associateModal.defect && (
+        {currentDefect && (
           <div>
-            <div style={{ marginBottom: 12 }}>
-              <Text strong>缺陷编号：</Text>
-              <Text code>{associateModal.defect.defectId}</Text>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>缺陷标题：</Text>
-              {associateModal.defect.title}
-            </div>
+            <Card size="small" style={{ marginBottom: 16 }}>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <div>
+                    <Text type="secondary">缺陷编号</Text>
+                    <div>
+                      <Text code strong>
+                        {currentDefect.defectId}
+                      </Text>
+                    </div>
+                  </div>
+                </Col>
+                <Col span={12}>
+                  <div>
+                    <Text type="secondary">状态</Text>
+                    <div>{getStatusTag(currentDefect.status)}</div>
+                  </div>
+                </Col>
+              </Row>
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary">缺陷标题</Text>
+                <div>{currentDefect.title}</div>
+              </div>
+            </Card>
 
-            <Divider orientation="left">已关联用例</Divider>
-            {associateModal.defect.caseIds.length > 0 ? (
+            <Divider orientation="left">
+              已关联用例 ({getAssociatedCases(currentDefect).length})
+            </Divider>
+            {getAssociatedCases(currentDefect).length > 0 ? (
               <List
                 size="small"
-                dataSource={cases.filter((c) =>
-                  associateModal.defect!.caseIds.includes(c.id)
-                )}
+                dataSource={getAssociatedCases(currentDefect)}
                 renderItem={(item) => (
                   <List.Item
                     actions={[
-                      <Button type="link" size="small" danger>
+                      <Button
+                        key="remove"
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<CloseOutlined />}
+                        onClick={() => handleRemoveCase(item.id)}
+                      >
                         移除
                       </Button>,
                     ]}
                   >
-                    <List.Item.Meta title={item.title} description={item.module} />
+                    <List.Item.Meta
+                      avatar={<AppstoreOutlined style={{ color: '#1677ff' }} />}
+                      title={item.title}
+                      description={
+                        <Space size="small">
+                          <Tag color="blue">{item.module}</Tag>
+                          <span className={`priority-tag-${item.priority}`}>{item.priority}</span>
+                        </Space>
+                      }
+                    />
                   </List.Item>
                 )}
               />
             ) : (
-              <Text type="secondary">暂未关联用例</Text>
+              <Empty description="暂无关联用例" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
 
-            <Divider orientation="left">可关联用例</Divider>
+            <Divider orientation="left">
+              可关联用例 ({getAvailableCases(currentDefect).length})
+            </Divider>
             <Input
-              placeholder="搜索用例..."
+              placeholder="搜索用例标题或模块..."
               prefix={<SearchOutlined />}
+              value={caseSearch}
+              onChange={(e) => setCaseSearch(e.target.value)}
+              allowClear
               style={{ marginBottom: 12 }}
             />
-            <List
-              size="small"
-              dataSource={cases.slice(0, 5)}
-              renderItem={(item) => (
-                <List.Item
-                  actions={[
-                    <Button type="link" size="small" icon={<LinkOutlined />}>
-                      关联
-                    </Button>,
-                  ]}
-                >
-                  <List.Item.Meta
-                    title={item.title}
-                    description={
-                      <Space>
-                        <Tag>{item.module}</Tag>
-                        <span className={`priority-tag-${item.priority}`}>{item.priority}</span>
-                      </Space>
-                    }
-                  />
-                </List.Item>
-              )}
-            />
+            {getAvailableCases(currentDefect).length > 0 ? (
+              <List
+                size="small"
+                dataSource={getAvailableCases(currentDefect)}
+                style={{ maxHeight: 200, overflowY: 'auto' }}
+                renderItem={(item) => (
+                  <List.Item
+                    actions={[
+                      <Button
+                        key="associate"
+                        type="link"
+                        size="small"
+                        icon={<LinkOutlined />}
+                        onClick={() => handleAssociateCase(item.id)}
+                      >
+                        关联
+                      </Button>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={<AppstoreOutlined style={{ color: '#8c8c8c' }} />}
+                      title={item.title}
+                      description={
+                        <Space size="small">
+                          <Tag color="blue">{item.module}</Tag>
+                          <span className={`priority-tag-${item.priority}`}>{item.priority}</span>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="没有可关联的用例" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
           </div>
         )}
       </Modal>

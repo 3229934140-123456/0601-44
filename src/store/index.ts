@@ -10,6 +10,7 @@ import type {
   ProjectSettings,
   ExecutionLog,
   TestStep,
+  CaseResult,
 } from '@/types'
 import {
   mockCases,
@@ -50,15 +51,20 @@ interface AppState {
   addExecution: (execution: Omit<ExecutionRecord, 'id' | 'logs' | 'results'>) => string
   updateExecution: (id: string, data: Partial<ExecutionRecord>) => void
   addExecutionLog: (executionId: string, log: Omit<ExecutionLog, 'id'>) => void
+  addCaseResult: (executionId: string, result: CaseResult) => void
+  updateCaseResult: (executionId: string, caseId: string, data: Partial<CaseResult>) => void
   setCurrentExecution: (id: string | null) => void
 
   addDefect: (defect: Omit<Defect, 'id' | 'createdAt' | 'updatedAt'>) => void
   updateDefect: (id: string, data: Partial<Defect>) => void
   deleteDefect: (id: string) => void
+  associateCaseToDefect: (defectId: string, caseId: string) => void
+  removeCaseFromDefect: (defectId: string, caseId: string) => void
 
   addProject: (name: string) => void
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => void
   setCurrentProject: (id: string) => void
+  deleteProject: (id: string) => void
 
   setSelectedTags: (tags: string[]) => void
   setSearchKeyword: (keyword: string) => void
@@ -202,6 +208,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
+  addCaseResult: (executionId, result) => {
+    set((state) => ({
+      executions: state.executions.map((e) =>
+        e.id === executionId ? { ...e, results: [...e.results, result] } : e
+      ),
+    }))
+  },
+
+  updateCaseResult: (executionId, caseId, data) => {
+    set((state) => ({
+      executions: state.executions.map((e) =>
+        e.id === executionId
+          ? {
+              ...e,
+              results: e.results.map((r) =>
+                r.caseId === caseId ? { ...r, ...data } : r
+              ),
+            }
+          : e
+      ),
+    }))
+  },
+
   setCurrentExecution: (id) => {
     set({ currentExecutionId: id })
   },
@@ -232,6 +261,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
+  associateCaseToDefect: (defectId, caseId) => {
+    const now = new Date().toLocaleString()
+    set((state) => ({
+      defects: state.defects.map((d) =>
+        d.id === defectId
+          ? {
+              ...d,
+              caseIds: d.caseIds.includes(caseId) ? d.caseIds : [...d.caseIds, caseId],
+              updatedAt: now,
+            }
+          : d
+      ),
+    }))
+  },
+
+  removeCaseFromDefect: (defectId, caseId) => {
+    const now = new Date().toLocaleString()
+    set((state) => ({
+      defects: state.defects.map((d) =>
+        d.id === defectId
+          ? {
+              ...d,
+              caseIds: d.caseIds.filter((cid) => cid !== caseId),
+              updatedAt: now,
+            }
+          : d
+      ),
+    }))
+  },
+
   addProject: (name) => {
     const newProject: Project = {
       id: uuidv4(),
@@ -253,6 +312,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setCurrentProject: (id) => {
     set({ currentProjectId: id })
+  },
+
+  deleteProject: (id) => {
+    set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }))
   },
 
   setSelectedTags: (tags) => {

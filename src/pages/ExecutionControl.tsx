@@ -15,26 +15,27 @@ import {
   Divider,
   List,
   Badge,
-  Tooltip,
   Empty,
+  Collapse,
 } from 'antd'
 import {
   PlayCircleOutlined,
-  PauseCircleOutlined,
   ReloadOutlined,
   StopOutlined,
   PictureOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ClockCircleOutlined,
-  AppstoreOutlined,
+  DownOutlined,
+  RightOutlined,
 } from '@ant-design/icons'
-import ReactECharts from 'echarts-for-react'
 import { useAppStore } from '@/store'
 import type { ExecutionRecord, TestStep, CaseResult } from '@/types'
+import { v4 as uuidv4 } from 'uuid'
 
 const { Title, Text } = Typography
 const { Option } = Select
+const { Panel } = Collapse
 
 function ExecutionControl() {
   const {
@@ -45,6 +46,8 @@ function ExecutionControl() {
     addExecution,
     updateExecution,
     addExecutionLog,
+    addCaseResult,
+    updateCaseResult,
     setCurrentExecution,
     getCaseById,
   } = useAppStore()
@@ -57,26 +60,29 @@ function ExecutionControl() {
   )
   const [isRunning, setIsRunning] = useState(false)
   const [currentCaseIndex, setCurrentCaseIndex] = useState(0)
-  const [selectedResult, setSelectedResult] = useState<CaseResult | null>(null)
   const [detailModalVisible, setDetailModalVisible] = useState(false)
-  const [rerunStepModal, setRerunStepModal] = useState<{
-    visible: boolean
-    caseResult: CaseResult | null
-    step: TestStep | null
-  }>({ visible: false, caseResult: null, step: null })
+  const [expandedCases, setExpandedCases] = useState<string[]>([])
 
   const logRef = useRef<HTMLDivElement>(null)
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const timersRef = useRef<NodeJS.Timeout[]>([])
 
   const currentExecution = executions.find((e) => e.id === currentExecutionId)
-  const idleDevices = devices.filter((d) => d.status === 'idle')
   const selectedSuite = suites.find((s) => s.id === selectedSuiteId)
 
   useEffect(() => {
-    if (logRef.current) {
+    if (logRef.current && currentExecution?.logs) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
-  }, [currentExecution?.logs])
+  }, [currentExecution?.logs?.length])
+
+  const clearAllTimers = () => {
+    timersRef.current.forEach((t) => clearTimeout(t))
+    timersRef.current = []
+  }
+
+  const addTimer = (timer: NodeJS.Timeout) => {
+    timersRef.current.push(timer)
+  }
 
   const handleStartExecution = () => {
     if (!selectedSuiteId || !selectedDeviceId) {
@@ -105,15 +111,17 @@ function ExecutionControl() {
 
     setIsRunning(true)
     setCurrentCaseIndex(0)
-    simulateExecution(executionId, suite.caseIds)
+    runExecution(executionId, suite.caseIds)
   }
 
-  const simulateExecution = (executionId: string, caseIds: string[]) => {
+  const runExecution = (executionId: string, caseIds: string[]) => {
     let caseIndex = 0
+    let passedCount = 0
+    let failedCount = 0
 
     const runNextCase = () => {
       if (caseIndex >= caseIds.length) {
-        finishExecution(executionId)
+        finishExecution(executionId, passedCount, failedCount)
         return
       }
 
@@ -132,32 +140,47 @@ function ExecutionControl() {
         message: `开始执行: ${caseData.title}`,
       })
 
+      const stepResults: TestStep[] = []
       let stepIndex = 0
+
       const runNextStep = () => {
         if (stepIndex >= caseData.steps.length) {
-          const passed = Math.random() > 0.2
-          addExecutionLog(executionId, {
-            timestamp: new Date().toLocaleTimeString(),
-            level: passed ? 'success' : 'error',
-            message: `${caseData.title} - ${passed ? '通过' : '失败'}`,
-          })
-
-          const exec = executions.find((e) => e.id === executionId)
-          if (exec) {
-            const newPassed = exec.passedCases + (passed ? 1 : 0)
-            const newFailed = exec.failedCases + (passed ? 0 : 1)
-            const total = newPassed + newFailed + exec.skippedCases
-            const passRate = total > 0 ? Math.round((newPassed / total) * 100) : 0
-
-            updateExecution(executionId, {
-              passedCases: newPassed,
-              failedCases: newFailed,
-              passRate,
-            })
+          const allPassed = stepResults.every((s) => s.status === 'passed')
+          const caseResult: CaseResult = {
+            caseId,
+            caseTitle: caseData.title,
+            status: allPassed ? 'passed' : 'failed',
+            startTime: new Date(Date.now() - stepResults.length * 800).toISOString(),
+            endTime: new Date().toISOString(),
+            stepResults,
+            errorMessage: allPassed ? undefined : '存在失败的测试步骤',
           }
 
+          addCaseResult(executionId, caseResult)
+          addExecutionLog(executionId, {
+            timestamp: new Date().toLocaleTimeString(),
+            level: allPassed ? 'success' : 'error',
+            message: `${caseData.title} - ${allPassed ? '通过' : '失败'}`,
+          })
+
+          if (allPassed) {
+            passedCount++
+          } else {
+            failedCount++
+          }
+
+          const total = passedCount + failedCount
+          const passRate = total > 0 ? Math.round((passedCount / total) * 100) : 0
+
+          updateExecution(executionId, {
+            passedCases: passedCount,
+            failedCases: failedCount,
+            passRate,
+          })
+
           caseIndex++
-          timerRef.current = setTimeout(runNextCase, 1000)
+          const t = setTimeout(runNextCase, 1000)
+          addTimer(t)
           return
         }
 
@@ -168,40 +191,64 @@ function ExecutionControl() {
           message: `  步骤 ${step.order}: ${step.action}`,
         })
 
+        const stepPassed = Math.random() > 0.15
+        const resultStep: TestStep = {
+          ...step,
+          status: stepPassed ? 'passed' : 'failed',
+          duration: Math.floor(Math.random() * 3000) + 500,
+          errorMessage: stepPassed ? undefined : '元素定位超时，未找到目标元素',
+        }
+        stepResults.push(resultStep)
+
+        if (!stepPassed) {
+          addExecutionLog(executionId, {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: `    ✗ 步骤 ${step.order} 失败: ${resultStep.errorMessage}`,
+          })
+        }
+
         stepIndex++
-        timerRef.current = setTimeout(runNextStep, 800)
+        const t = setTimeout(runNextStep, 800)
+        addTimer(t)
       }
 
-      runNextStep()
+      const t = setTimeout(runNextStep, 500)
+      addTimer(t)
     }
 
-    timerRef.current = setTimeout(runNextCase, 500)
+    const t = setTimeout(runNextCase, 500)
+    addTimer(t)
   }
 
-  const finishExecution = (executionId: string) => {
-    const exec = executions.find((e) => e.id === executionId)
-    if (exec) {
-      const status = exec.failedCases === 0 ? 'passed' : 'failed'
-      updateExecution(executionId, {
-        endTime: new Date().toLocaleString(),
-        status,
-      })
-      addExecutionLog(executionId, {
-        timestamp: new Date().toLocaleTimeString(),
-        level: status === 'passed' ? 'success' : 'warn',
-        message: `测试执行完成，通过率: ${exec.passRate}%`,
-      })
-    }
+  const finishExecution = (executionId: string, passed: number, failed: number) => {
+    const status = failed === 0 ? 'passed' : 'failed'
+    const total = passed + failed
+    const passRate = total > 0 ? Math.round((passed / total) * 100) : 0
+
+    updateExecution(executionId, {
+      endTime: new Date().toLocaleString(),
+      status,
+      passRate,
+      passedCases: passed,
+      failedCases: failed,
+    })
+
+    addExecutionLog(executionId, {
+      timestamp: new Date().toLocaleTimeString(),
+      level: status === 'passed' ? 'success' : 'warn',
+      message: `测试执行完成，通过 ${passed} 个，失败 ${failed} 个，通过率: ${passRate}%`,
+    })
+
     setIsRunning(false)
     setCurrentCaseIndex(0)
+    clearAllTimers()
   }
 
   const handleStopExecution = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
+    clearAllTimers()
     if (currentExecutionId) {
+      const exec = executions.find((e) => e.id === currentExecutionId)
       updateExecution(currentExecutionId, {
         endTime: new Date().toLocaleString(),
         status: 'cancelled',
@@ -220,13 +267,224 @@ function ExecutionControl() {
     setDetailModalVisible(true)
   }
 
-  const handleRerunStep = (caseResult: CaseResult, step: TestStep) => {
-    setRerunStepModal({ visible: true, caseResult, step })
+  const handleRerunFailed = (record: ExecutionRecord) => {
+    if (isRunning) {
+      message.warning('当前有任务正在执行，请先停止')
+      return
+    }
+
+    const failedResults = record.results.filter((r) => r.status === 'failed')
+    if (failedResults.length === 0) {
+      message.info('没有失败的用例需要重跑')
+      return
+    }
+
+    setCurrentExecution(record.id)
+    setIsRunning(true)
+    setDetailModalVisible(true)
+
+    let rerunPassed = 0
+    let rerunFailed = 0
+    let index = 0
+
+    const rerunNextCase = () => {
+      if (index >= failedResults.length) {
+        const passed = record.passedCases + rerunPassed
+        const failed = record.failedCases - rerunFailed + (failedResults.length - rerunPassed)
+        const total = record.totalCases
+        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0
+        const newStatus = failed === 0 ? 'passed' : 'failed'
+
+        updateExecution(record.id, {
+          passedCases: passed,
+          failedCases: failed,
+          passRate,
+          status: newStatus,
+          endTime: new Date().toLocaleString(),
+        })
+
+        addExecutionLog(record.id, {
+          timestamp: new Date().toLocaleTimeString(),
+          level: 'success',
+          message: `失败用例重跑完成，新增通过 ${rerunPassed} 个，仍失败 ${failedResults.length - rerunPassed} 个`,
+        })
+
+        setIsRunning(false)
+        message.success('失败用例重跑完成')
+        return
+      }
+
+      const caseResult = failedResults[index]
+      const caseData = getCaseById(caseResult.caseId)
+      if (!caseData) {
+        index++
+        rerunNextCase()
+        return
+      }
+
+      addExecutionLog(record.id, {
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'info',
+        message: `[重跑] 开始执行: ${caseResult.caseTitle}`,
+      })
+
+      const stepResults = [...(caseResult.stepResults || [])]
+      let stepIndex = 0
+
+      const rerunNextStep = () => {
+        if (stepIndex >= caseData.steps.length) {
+          const allPassed = stepResults.every((s) => s.status === 'passed')
+
+          updateCaseResult(record.id, caseResult.caseId, {
+            status: allPassed ? 'passed' : 'failed',
+            stepResults,
+            errorMessage: allPassed ? undefined : '存在失败的测试步骤',
+            endTime: new Date().toISOString(),
+          })
+
+          addExecutionLog(record.id, {
+            timestamp: new Date().toLocaleTimeString(),
+            level: allPassed ? 'success' : 'error',
+            message: `[重跑] ${caseResult.caseTitle} - ${allPassed ? '通过' : '失败'}`,
+          })
+
+          if (allPassed) {
+            rerunPassed++
+          } else {
+            rerunFailed++
+          }
+
+          index++
+          const t = setTimeout(rerunNextCase, 800)
+          addTimer(t)
+          return
+        }
+
+        const step = caseData.steps[stepIndex]
+        const existingStep = stepResults.find((s) => s.order === step.order)
+
+        if (existingStep && existingStep.status === 'passed') {
+          stepIndex++
+          rerunNextStep()
+          return
+        }
+
+        addExecutionLog(record.id, {
+          timestamp: new Date().toLocaleTimeString(),
+          level: 'info',
+          message: `  [重跑] 步骤 ${step.order}: ${step.action}`,
+        })
+
+        const stepPassed = Math.random() > 0.2
+        const idx = stepResults.findIndex((s) => s.order === step.order)
+        if (idx >= 0) {
+          stepResults[idx] = {
+            ...stepResults[idx],
+            status: stepPassed ? 'passed' : 'failed',
+            errorMessage: stepPassed ? undefined : '元素定位超时，未找到目标元素',
+            duration: Math.floor(Math.random() * 3000) + 500,
+          }
+        }
+
+        if (!stepPassed) {
+          addExecutionLog(record.id, {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: `    ✗ 步骤 ${step.order} 失败`,
+          })
+        } else {
+          addExecutionLog(record.id, {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'success',
+            message: `    ✓ 步骤 ${step.order} 通过`,
+          })
+        }
+
+        stepIndex++
+        const t = setTimeout(rerunNextStep, 600)
+        addTimer(t)
+      }
+
+      const t = setTimeout(rerunNextStep, 500)
+      addTimer(t)
+    }
+
+    rerunNextCase()
   }
 
-  const confirmRerunStep = () => {
-    message.success('步骤重跑已启动')
-    setRerunStepModal({ visible: false, caseResult: null, step: null })
+  const handleRerunStep = (record: ExecutionRecord, caseResult: CaseResult, step: TestStep) => {
+    if (isRunning) {
+      message.warning('当前有任务正在执行')
+      return
+    }
+
+    setIsRunning(true)
+    setDetailModalVisible(true)
+    setCurrentExecution(record.id)
+
+    addExecutionLog(record.id, {
+      timestamp: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: `[单步重跑] ${caseResult.caseTitle} - 步骤 ${step.order}: ${step.action}`,
+    })
+
+    const t = setTimeout(() => {
+      const passed = Math.random() > 0.3
+
+      const updatedSteps = caseResult.stepResults?.map((s) =>
+        s.order === step.order
+          ? {
+              ...s,
+              status: (passed ? 'passed' : 'failed') as 'passed' | 'failed',
+              errorMessage: passed ? undefined : '重试后仍然失败',
+              duration: Math.floor(Math.random() * 3000) + 500,
+            }
+          : s
+      )
+
+      const allPassed = updatedSteps?.every((s) => s.status === 'passed')
+
+      updateCaseResult(record.id, caseResult.caseId, {
+        status: (allPassed ? 'passed' : 'failed') as 'passed' | 'failed',
+        stepResults: updatedSteps,
+        errorMessage: allPassed ? undefined : caseResult.errorMessage,
+      })
+
+      const exec = executions.find((e) => e.id === record.id)
+      if (exec) {
+        let newPassed = exec.passedCases
+        let newFailed = exec.failedCases
+
+        if (caseResult.status === 'failed' && allPassed) {
+          newPassed++
+          newFailed--
+        } else if (caseResult.status === 'passed' && !allPassed) {
+          newPassed--
+          newFailed++
+        }
+
+        const total = newPassed + newFailed + exec.skippedCases
+        const passRate = total > 0 ? Math.round((newPassed / total) * 100) : 0
+
+        updateExecution(record.id, {
+          passedCases: newPassed,
+          failedCases: newFailed,
+          passRate,
+          status: newFailed === 0 ? 'passed' : 'failed',
+        })
+      }
+
+      addExecutionLog(record.id, {
+        timestamp: new Date().toLocaleTimeString(),
+        level: passed ? 'success' : 'error',
+        message: `[单步重跑] 步骤 ${step.order} - ${passed ? '通过' : '失败'}`,
+      })
+
+      setIsRunning(false)
+      message.success(passed ? '步骤重跑通过' : '步骤重跑失败')
+    }, 1500)
+
+    addTimer(t)
   }
 
   const executionProgress = currentExecution
@@ -283,17 +541,15 @@ function ExecutionControl() {
       title: '通过率',
       dataIndex: 'passRate',
       key: 'passRate',
-      width: 100,
+      width: 120,
       render: (rate: number) => (
-        <span style={{ color: rate >= 80 ? '#52c41a' : rate >= 60 ? '#faad14' : '#ff4d4f' }}>
-          {rate}%
-        </span>
+        <Progress percent={rate} size="small" status={rate >= 80 ? 'success' : rate >= 60 ? 'normal' : 'exception'} />
       ),
     },
     {
       title: '用例数',
       key: 'cases',
-      width: 120,
+      width: 140,
       render: (_: unknown, record: ExecutionRecord) => (
         <span>
           <Text type="success">{record.passedCases}通过</Text> /{' '}
@@ -302,16 +558,30 @@ function ExecutionControl() {
       ),
     },
     {
+      title: '结束时间',
+      dataIndex: 'endTime',
+      key: 'endTime',
+      width: 160,
+      render: (time: string | undefined) => time || '-',
+    },
+    {
       title: '操作',
       key: 'actions',
-      width: 120,
+      width: 160,
+      fixed: 'right' as const,
       render: (_: unknown, record: ExecutionRecord) => (
-        <Space>
+        <Space size="small">
           <Button type="link" size="small" onClick={() => handleViewResult(record)}>
-            查看详情
+            详情
           </Button>
           {record.status === 'failed' && (
-            <Button type="link" size="small" icon={<ReloadOutlined />}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => handleRerunFailed(record)}
+              disabled={isRunning}
+            >
               重跑失败
             </Button>
           )}
@@ -319,6 +589,60 @@ function ExecutionControl() {
       ),
     },
   ]
+
+  const toggleCaseExpand = (caseId: string) => {
+    setExpandedCases((prev) =>
+      prev.includes(caseId) ? prev.filter((id) => id !== caseId) : [...prev, caseId]
+    )
+  }
+
+  const renderStepItem = (step: TestStep, caseResult: CaseResult) => {
+    const execRecord = currentExecution
+    const canRerun = step.status === 'failed' && !isRunning && execRecord
+
+    return (
+      <div
+        key={step.id}
+        style={{
+          padding: '8px 12px',
+          background: step.status === 'failed' ? '#fff1f0' : '#f6ffed',
+          borderLeft: `3px solid ${step.status === 'failed' ? '#ff4d4f' : '#52c41a'}`,
+          marginBottom: 4,
+          borderRadius: 4,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <Text strong>步骤 {step.order}：</Text>
+            {step.action}
+          </div>
+          <Space>
+            {step.status === 'passed' && <Tag color="success">通过</Tag>}
+            {step.status === 'failed' && <Tag color="error">失败</Tag>}
+            {step.duration && <Text type="secondary">{step.duration}ms</Text>}
+            {canRerun && execRecord && (
+              <Button
+                type="primary"
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => handleRerunStep(execRecord, caseResult, step)}
+              >
+                重跑
+              </Button>
+            )}
+          </Space>
+        </div>
+        <div style={{ marginTop: 4, paddingLeft: 16 }}>
+          <Text type="secondary">预期：{step.expected}</Text>
+        </div>
+        {step.errorMessage && (
+          <div style={{ marginTop: 4, paddingLeft: 16 }}>
+            <Text type="danger">错误：{step.errorMessage}</Text>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -407,25 +731,17 @@ function ExecutionControl() {
           <Card size="small" title="执行统计">
             <Row gutter={[8, 8]}>
               <Col span={12}>
-                <div className="report-card" style={{ padding: 12, textAlign: 'center' }}>
-                  <div className="report-stat-value" style={{ fontSize: 24 }}>
-                    {executions.length}
-                  </div>
-                  <div className="report-stat-label">总执行次数</div>
+                <div style={{ padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, fontWeight: 600 }}>{executions.length}</div>
+                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>总执行次数</div>
                 </div>
               </Col>
               <Col span={12}>
-                <div className="report-card" style={{ padding: 12, textAlign: 'center' }}>
-                  <div
-                    className="report-stat-value"
-                    style={{
-                      fontSize: 24,
-                      color: '#52c41a',
-                    }}
-                  >
+                <div style={{ padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: '#52c41a' }}>
                     {executions.filter((e) => e.status === 'passed').length}
                   </div>
-                  <div className="report-stat-label">通过次数</div>
+                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>通过次数</div>
                 </div>
               </Col>
             </Row>
@@ -498,6 +814,7 @@ function ExecutionControl() {
           dataSource={executions}
           rowKey="id"
           size="small"
+          scroll={{ x: 1000 }}
           pagination={{
             pageSize: 5,
             showSizeChanger: true,
@@ -509,8 +826,23 @@ function ExecutionControl() {
         title="执行详情"
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
-        footer={null}
         width={900}
+        footer={[
+          currentExecution?.status === 'failed' && (
+            <Button
+              key="rerun"
+              type="primary"
+              icon={<ReloadOutlined />}
+              onClick={() => handleRerunFailed(currentExecution)}
+              disabled={isRunning}
+            >
+              重跑失败用例
+            </Button>
+          ),
+          <Button key="close" onClick={() => setDetailModalVisible(false)}>
+            关闭
+          </Button>,
+        ].filter(Boolean)}
       >
         {currentExecution && (
           <div>
@@ -533,7 +865,7 @@ function ExecutionControl() {
                   <div
                     style={{
                       fontWeight: 600,
-                      fontSize: 18,
+                      fontSize: 22,
                       color:
                         currentExecution.passRate >= 80
                           ? '#52c41a'
@@ -548,92 +880,108 @@ function ExecutionControl() {
               </Col>
             </Row>
 
+            <Row gutter={16} style={{ marginBottom: 16 }}>
+              <Col span={12}>
+                <Text type="secondary">开始时间：</Text>
+                {currentExecution.startTime}
+              </Col>
+              <Col span={12}>
+                <Text type="secondary">结束时间：</Text>
+                {currentExecution.endTime || '执行中...'}
+              </Col>
+            </Row>
+
             <Divider />
 
-            <Title level={5}>用例执行结果</Title>
+            <Title level={5}>
+              用例执行结果（{currentExecution.passedCases}通过 / {currentExecution.failedCases}失败 / {currentExecution.totalCases}）
+            </Title>
             {currentExecution.results && currentExecution.results.length > 0 ? (
-              <List
-                size="small"
-                dataSource={currentExecution.results}
-                renderItem={(result) => (
-                  <List.Item
-                    actions={[
-                      <Button
-                        key="view"
-                        type="link"
-                        size="small"
-                        onClick={() => setSelectedResult(result)}
-                      >
-                        查看步骤
-                      </Button>,
-                      result.status === 'failed' && (
-                        <Button
-                          key="rerun"
-                          type="link"
-                          size="small"
-                          icon={<ReloadOutlined />}
-                        >
-                          重跑
-                        </Button>
-                      ),
-                    ].filter(Boolean)}
+              <div>
+                {currentExecution.results.map((result) => (
+                  <div
+                    key={result.caseId}
+                    style={{
+                      marginBottom: 8,
+                      border: '1px solid #e8e8e8',
+                      borderRadius: 6,
+                      overflow: 'hidden',
+                    }}
                   >
-                    <List.Item.Meta
-                      avatar={
-                        result.status === 'passed' ? (
-                          <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} />
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        background: result.status === 'passed' ? '#f6ffed' : '#fff1f0',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onClick={() => toggleCaseExpand(result.caseId)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {expandedCases.includes(result.caseId) ? (
+                          <DownOutlined style={{ fontSize: 12, color: '#999' }} />
                         ) : (
-                          <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 20 }} />
-                        )
-                      }
-                      title={result.caseTitle}
-                      description={
-                        result.errorMessage ? (
-                          <Text type="danger">{result.errorMessage}</Text>
+                          <RightOutlined style={{ fontSize: 12, color: '#999' }} />
+                        )}
+                        {result.status === 'passed' ? (
+                          <CheckCircleOutlined style={{ color: '#52c41a' }} />
                         ) : (
-                          <Text type="secondary">
-                            {result.stepResults?.length || 0} 个步骤
-                          </Text>
-                        )
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
+                          <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                        )}
+                        <Text strong>{result.caseTitle}</Text>
+                        <Tag color={result.status === 'passed' ? 'success' : 'error'}>
+                          {result.status === 'passed' ? '通过' : '失败'}
+                        </Tag>
+                      </div>
+                      <Space>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {result.stepResults?.length || 0} 个步骤
+                        </Text>
+                        {result.status === 'failed' && (
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<ReloadOutlined />}
+                            disabled={isRunning}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRerunFailed(currentExecution)
+                            }}
+                          >
+                            重跑用例
+                          </Button>
+                        )}
+                      </Space>
+                    </div>
+                    {expandedCases.includes(result.caseId) && (
+                      <div style={{ padding: 12, background: '#fafafa' }}>
+                        {result.stepResults?.map((step) => renderStepItem(step, result))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             ) : (
               <Empty description="暂无详细结果" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
-          </div>
-        )}
-      </Modal>
 
-      <Modal
-        title="重跑失败步骤"
-        open={rerunStepModal.visible}
-        onOk={confirmRerunStep}
-        onCancel={() => setRerunStepModal({ visible: false, caseResult: null, step: null })}
-        okText="确认重跑"
-        cancelText="取消"
-      >
-        {rerunStepModal.step && (
-          <div>
-            <p>
-              <Text type="secondary">用例：</Text>
-              {rerunStepModal.caseResult?.caseTitle}
-            </p>
-            <p>
-              <Text type="secondary">步骤：</Text>
-              步骤 {rerunStepModal.step.order}
-            </p>
-            <p>
-              <Text type="secondary">操作：</Text>
-              {rerunStepModal.step.action}
-            </p>
-            <p>
-              <Text type="secondary">预期结果：</Text>
-              {rerunStepModal.step.expected}
-            </p>
-            <Text type="danger">错误信息：{rerunStepModal.step.errorMessage}</Text>
+            <Divider />
+
+            <Title level={5}>执行日志</Title>
+            <div className="log-panel" style={{ maxHeight: 200 }}>
+              {currentExecution.logs && currentExecution.logs.length > 0 ? (
+                currentExecution.logs.map((log) => (
+                  <div key={log.id}>
+                    <span style={{ color: '#666', marginRight: 8 }}>[{log.timestamp}]</span>
+                    <span className={`log-${log.level}`}>{log.message}</span>
+                  </div>
+                ))
+              ) : (
+                <div style={{ color: '#666' }}>暂无日志</div>
+              )}
+            </div>
           </div>
         )}
       </Modal>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Card,
   Form,
@@ -13,7 +13,6 @@ import {
   Row,
   Col,
   Space,
-  TimePicker,
   Tag,
   Modal,
   List,
@@ -25,47 +24,98 @@ import {
   PlusOutlined,
   AppstoreOutlined,
   DeleteOutlined,
-  EditOutlined,
 } from '@ant-design/icons'
 import { useAppStore } from '@/store'
 import dayjs from 'dayjs'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 const { Option } = Select
-const { TextArea } = Input
 
 function RunSettings() {
-  const { projects, currentProjectId, updateProjectSettings, addProject, setCurrentProject } =
+  const { projects, currentProjectId, updateProjectSettings, addProject, setCurrentProject, deleteProject } =
     useAppStore()
+
   const [form] = Form.useForm()
+  const [addModalVisible, setAddModalVisible] = useState(false)
+  const [newProjectName, setNewProjectName] = useState('')
+  const [isDirty, setIsDirty] = useState(false)
 
   const currentProject = projects.find((p) => p.id === currentProjectId)
-  const settings = currentProject?.settings
+
+  useEffect(() => {
+    if (currentProject) {
+      form.setFieldsValue({
+        baseUrl: currentProject.settings.baseUrl,
+        defaultBrowser: currentProject.settings.defaultBrowser,
+        defaultDevice: currentProject.settings.defaultDevice,
+        timeout: currentProject.settings.timeout,
+        retryCount: currentProject.settings.retryCount,
+        screenshotOnFailure: currentProject.settings.screenshotOnFailure,
+        reportPath: currentProject.settings.reportPath,
+        scheduleEnabled: currentProject.settings.scheduleEnabled,
+      })
+      setIsDirty(false)
+    }
+  }, [currentProjectId])
+
+  const handleValuesChange = () => {
+    setIsDirty(true)
+  }
 
   const handleSave = () => {
     form.validateFields().then((values) => {
-      if (currentProjectId) {
-        updateProjectSettings(currentProjectId, values)
-        message.success('设置保存成功')
-      }
+      updateProjectSettings(currentProjectId, values)
+      setIsDirty(false)
+      message.success('设置保存成功')
     })
   }
 
   const handleAddProject = () => {
-    Modal.confirm({
-      title: '新建项目',
-      content: (
-        <Form>
-          <Form.Item label="项目名称" name="name">
-            <Input placeholder="请输入项目名称" />
-          </Form.Item>
-        </Form>
-      ),
-      onOk: () => {
-        addProject('新项目')
-        message.success('项目创建成功')
-      },
-    })
+    if (!newProjectName.trim()) {
+      message.warning('请输入项目名称')
+      return
+    }
+    addProject(newProjectName.trim())
+    setNewProjectName('')
+    setAddModalVisible(false)
+    message.success('项目创建成功')
+  }
+
+  const handleSwitchProject = (id: string) => {
+    if (isDirty) {
+      Modal.confirm({
+        title: '有未保存的更改',
+        content: '当前项目的设置有未保存的更改，是否先保存？',
+        okText: '保存并切换',
+        cancelText: '不保存',
+        onOk: () => {
+          form.validateFields().then((values) => {
+            updateProjectSettings(currentProjectId, values)
+            setCurrentProject(id)
+          })
+        },
+        onCancel: () => {
+          setCurrentProject(id)
+        },
+      })
+    } else {
+      setCurrentProject(id)
+    }
+  }
+
+  const handleDeleteProject = (id: string) => {
+    if (projects.length <= 1) {
+      message.warning('至少保留一个项目')
+      return
+    }
+    deleteProject(id)
+    if (currentProjectId === id) {
+      const remaining = projects.filter((p) => p.id !== id)
+      if (remaining.length > 0) {
+        setCurrentProject(remaining[0].id)
+      }
+    }
+    message.success('删除成功')
   }
 
   return (
@@ -74,11 +124,12 @@ function RunSettings() {
         <div className="page-title">
           <SettingOutlined style={{ marginRight: 8 }} />
           运行设置
+          {isDirty && <Tag color="orange" style={{ marginLeft: 12 }}>有未保存更改</Tag>}
         </div>
         <Space>
           <Select
             value={currentProjectId}
-            onChange={setCurrentProject}
+            onChange={handleSwitchProject}
             style={{ width: 200 }}
           >
             {projects.map((p) => (
@@ -87,10 +138,10 @@ function RunSettings() {
               </Option>
             ))}
           </Select>
-          <Button icon={<PlusOutlined />} onClick={handleAddProject}>
+          <Button icon={<PlusOutlined />} onClick={() => setAddModalVisible(true)}>
             新建项目
           </Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} disabled={!isDirty}>
             保存设置
           </Button>
         </Space>
@@ -102,17 +153,7 @@ function RunSettings() {
             <Form
               form={form}
               layout="vertical"
-              initialValues={{
-                baseUrl: settings?.baseUrl,
-                defaultBrowser: settings?.defaultBrowser,
-                defaultDevice: settings?.defaultDevice,
-                timeout: settings?.timeout,
-                retryCount: settings?.retryCount,
-                screenshotOnFailure: settings?.screenshotOnFailure,
-                reportPath: settings?.reportPath,
-                scheduleEnabled: settings?.scheduleEnabled,
-                scheduleTime: settings?.scheduleTime ? dayjs(settings.scheduleTime, 'HH:mm') : undefined,
-              }}
+              onValuesChange={handleValuesChange}
             >
               <Form.Item
                 name="baseUrl"
@@ -180,7 +221,7 @@ function RunSettings() {
           </Card>
 
           <Card size="small" title="定时执行" style={{ marginTop: 16 }}>
-            <Form form={form} layout="vertical">
+            <Form form={form} layout="vertical" onValuesChange={handleValuesChange}>
               <Form.Item
                 name="scheduleEnabled"
                 label="启用定时执行"
@@ -191,8 +232,14 @@ function RunSettings() {
 
               <Row gutter={16}>
                 <Col span={12}>
-                  <Form.Item name="scheduleTime" label="执行时间">
-                    <TimePicker format="HH:mm" style={{ width: '100%' }} />
+                  <Form.Item label="执行时间">
+                    <Select defaultValue="09:00">
+                      <Option value="08:00">08:00</Option>
+                      <Option value="09:00">09:00</Option>
+                      <Option value="12:00">12:00</Option>
+                      <Option value="18:00">18:00</Option>
+                      <Option value="21:00">21:00</Option>
+                    </Select>
                   </Form.Item>
                 </Col>
                 <Col span={12}>
@@ -201,7 +248,6 @@ function RunSettings() {
                       <Option value="daily">每天</Option>
                       <Option value="weekly">每周</Option>
                       <Option value="monthly">每月</Option>
-                      <Option value="cron">自定义Cron</Option>
                     </Select>
                   </Form.Item>
                 </Col>
@@ -226,7 +272,7 @@ function RunSettings() {
                 <Space>
                   <ClockCircleOutlined style={{ color: '#52c41a' }} />
                   <Text type="success">
-                    下次执行时间：2024-01-23 09:00:00（每天）
+                    下次执行时间：{dayjs().add(1, 'day').format('YYYY-MM-DD')} 09:00:00（每天）
                   </Text>
                 </Space>
               </div>
@@ -235,7 +281,15 @@ function RunSettings() {
         </Col>
 
         <Col span={8}>
-          <Card size="small" title="项目列表">
+          <Card
+            size="small"
+            title="项目列表"
+            extra={
+              <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => setAddModalVisible(true)}>
+                新建
+              </Button>
+            }
+          >
             <List
               size="small"
               dataSource={projects}
@@ -248,24 +302,40 @@ function RunSettings() {
                     marginBottom: 4,
                     cursor: 'pointer',
                     border:
-                      item.id === currentProjectId
-                        ? '1px solid #1677ff'
-                        : '1px solid transparent',
+                      item.id === currentProjectId ? '1px solid #1677ff' : '1px solid transparent',
                   }}
-                  onClick={() => setCurrentProject(item.id)}
+                  onClick={() => handleSwitchProject(item.id)}
                   actions={[
-                    <Button key="edit" type="text" size="small" icon={<EditOutlined />} />,
-                    projects.length > 1 ? (
-                      <Button key="delete" type="text" size="small" danger icon={<DeleteOutlined />} />
-                    ) : null,
-                  ].filter(Boolean)}
+                    <Button
+                      key="delete"
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDeleteProject(item.id)
+                      }}
+                      disabled={projects.length <= 1}
+                    />,
+                  ]}
                 >
                   <List.Item.Meta
-                    title={item.name}
+                    avatar={<AppstoreOutlined style={{ color: '#1677ff' }} />}
+                    title={
+                      <Space>
+                        {item.name}
+                        {item.id === currentProjectId && (
+                          <Tag color="blue" style={{ margin: 0 }}>
+                            当前
+                          </Tag>
+                        )}
+                      </Space>
+                    }
                     description={
-                      <Tag color="blue" style={{ margin: 0 }}>
-                        {item.id === currentProjectId ? '当前项目' : ''}
-                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {item.settings.baseUrl}
+                      </Text>
                     }
                   />
                 </List.Item>
@@ -309,6 +379,33 @@ function RunSettings() {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title="新建项目"
+        open={addModalVisible}
+        onOk={handleAddProject}
+        onCancel={() => setAddModalVisible(false)}
+        okText="创建"
+        cancelText="取消"
+      >
+        <div>
+          <div style={{ marginBottom: 8 }}>
+            <Text type="secondary">项目名称</Text>
+          </div>
+          <Input
+            placeholder="请输入项目名称"
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            onPressEnter={handleAddProject}
+            autoFocus
+          />
+          <div style={{ marginTop: 12 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              提示：创建后将使用默认配置，您可以在后续修改各项设置。
+            </Text>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
