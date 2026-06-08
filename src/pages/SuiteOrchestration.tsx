@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Card,
   Row,
@@ -133,11 +133,23 @@ function DroppableCanvas({ children, isOver, isEmpty }: DroppableCanvasProps) {
 }
 
 function SuiteOrchestration() {
-  const { cases, suites, addSuite, updateSuite, deleteSuite, reorderSuiteCases, getCaseById } =
-    useAppStore()
+  const {
+    cases,
+    suites,
+    projects,
+    currentProjectId,
+    setCurrentProject,
+    addSuite,
+    updateSuite,
+    deleteSuite,
+    reorderSuiteCases,
+    getCaseById,
+  } = useAppStore()
+
+  const filteredSuites = suites.filter((s) => s.projectId === currentProjectId)
 
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(
-    suites.length > 0 ? suites[0].id : null
+    filteredSuites.length > 0 ? filteredSuites[0].id : null
   )
   const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedTag, setSelectedTag] = useState<string>('')
@@ -158,7 +170,7 @@ function SuiteOrchestration() {
     })
   )
 
-  const selectedSuite = suites.find((s) => s.id === selectedSuiteId)
+  const selectedSuite = filteredSuites.find((s) => s.id === selectedSuiteId)
   const suiteCases = selectedSuite
     ? selectedSuite.caseIds
         .map((id) => getCaseById(id))
@@ -166,6 +178,12 @@ function SuiteOrchestration() {
     : []
 
   const allTags = Array.from(new Set(cases.flatMap((c) => c.tags)))
+
+  useEffect(() => {
+    if (selectedSuiteId && !filteredSuites.find((s) => s.id === selectedSuiteId)) {
+      setSelectedSuiteId(filteredSuites.length > 0 ? filteredSuites[0].id : null)
+    }
+  }, [currentProjectId, filteredSuites, selectedSuiteId])
 
   const availableCases = cases.filter((c) => {
     const notInSuite = !selectedSuite?.caseIds.includes(c.id)
@@ -286,6 +304,7 @@ function SuiteOrchestration() {
         addSuite({
           ...values,
           caseIds: [],
+          projectId: currentProjectId,
         })
         message.success('创建成功')
       }
@@ -296,7 +315,7 @@ function SuiteOrchestration() {
   const handleDeleteSuite = (id: string) => {
     deleteSuite(id)
     if (selectedSuiteId === id) {
-      const remaining = suites.filter((s) => s.id !== id)
+      const remaining = filteredSuites.filter((s) => s.id !== id)
       setSelectedSuiteId(remaining.length > 0 ? remaining[0].id : null)
     }
     message.success('删除成功')
@@ -326,9 +345,23 @@ function SuiteOrchestration() {
   return (
     <div>
       <div className="page-header">
-        <div className="page-title">
-          <AppstoreOutlined style={{ marginRight: 8 }} />
-          套件编排
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div className="page-title">
+            <AppstoreOutlined style={{ marginRight: 8 }} />
+            套件编排
+          </div>
+          <Select
+            value={currentProjectId}
+            onChange={setCurrentProject}
+            style={{ width: 200 }}
+            placeholder="选择项目"
+          >
+            {projects.map((p) => (
+              <Option key={p.id} value={p.id}>
+                {p.name}
+              </Option>
+            ))}
+          </Select>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAddSuite}>
           新建套件
@@ -354,12 +387,12 @@ function SuiteOrchestration() {
               }
               style={{ height: '100%' }}
             >
-              {suites.length === 0 ? (
+              {filteredSuites.length === 0 ? (
                 <Empty description="暂无套件" />
               ) : (
                 <List
                   size="small"
-                  dataSource={suites}
+                  dataSource={filteredSuites}
                   renderItem={(suite) => (
                     <List.Item
                       key={suite.id}

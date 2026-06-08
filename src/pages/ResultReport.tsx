@@ -53,6 +53,57 @@ const { RangePicker } = DatePicker
 const { Panel } = Collapse
 const { TabPane } = Tabs
 
+const buildReportExportContent = (report: ReportRecord): string => {
+  const trendText = report.trendData
+    .map((t) => `${t.date}: 通过率${t.passRate}%, 执行${t.executionCount}次`)
+    .join('\n  ')
+  const failedText = report.failedCaseRanking
+    .map((f, i) => {
+      const defectText = f.defects && f.defects.length > 0
+        ? ` [关联缺陷: ${f.defects.map((d) => d.defectId).join(', ')}]`
+        : ''
+      const errorText = f.errorMessage ? `\n    错误: ${f.errorMessage}` : ''
+      return `${i + 1}. ${f.caseTitle} (${f.module}) - 失败${f.failCount}次, 失败率${f.failRate}%${defectText}${errorText}`
+    })
+    .join('\n  ')
+  const reasonText = report.failureReasons
+    .map((r, i) => `${i + 1}. ${r.reason}: ${r.count}次`)
+    .join('\n  ')
+  const defectText = report.relatedDefects
+    .map((d) => `${d.defectId} - ${d.title} [${d.status} / ${d.severity}]`)
+    .join('\n  ')
+
+  return `报告名称: ${report.title}
+生成时间: ${report.createdAt}
+类型: ${report.type === 'daily' ? '日报' : '执行报告'}
+
+筛选条件:
+  项目: ${report.filters.projectName || '全部项目'}
+  套件: ${report.filters.suiteName || '全部套件'}
+  设备: ${report.filters.deviceName || '全部设备'}
+  时间范围: ${report.filters.startDate || '不限'} ~ ${report.filters.endDate || '不限'}
+
+执行概览:
+  总执行次数: ${report.summary.totalExecutions}
+  总用例数: ${report.summary.totalCases}
+  通过用例: ${report.summary.passedCases}
+  失败用例: ${report.summary.failedCases}
+  通过率: ${report.summary.passRate}%
+
+通过率趋势:
+  ${trendText || '无数据'}
+
+失败原因分布:
+  ${reasonText || '无失败数据'}
+
+失败用例明细:
+  ${failedText || '无失败用例'}
+
+关联缺陷:
+  ${defectText || '无关联缺陷'}
+`
+}
+
 function ResultReport() {
   const {
     executions,
@@ -147,13 +198,25 @@ function ResultReport() {
   }, [compareBaseId, compareTargetId])
 
   const trendData = useMemo(() => {
-    const days = 7
+    if (filteredExecutions.length === 0) {
+      return { dates: [] as string[], passRates: [] as number[], execCounts: [] as number[] }
+    }
+
+    const sorted = [...filteredExecutions].sort(
+      (a, b) => dayjs(a.startTime).valueOf() - dayjs(b.startTime).valueOf()
+    )
+    const firstDate = dayjs(sorted[0].startTime).startOf('day')
+    const lastDate = dayjs(sorted[sorted.length - 1].startTime).startOf('day')
+    const totalDays = lastDate.diff(firstDate, 'day') + 1
+    const days = Math.min(totalDays, 30)
+    const startDate = totalDays > 30 ? lastDate.subtract(29, 'day') : firstDate
+
     const dates: string[] = []
     const passRates: number[] = []
     const execCounts: number[] = []
 
-    for (let i = days - 1; i >= 0; i--) {
-      const date = dayjs().subtract(i, 'day')
+    for (let i = 0; i < days; i++) {
+      const date = startDate.add(i, 'day')
       const dateStr = date.format('MM-DD')
       dates.push(dateStr)
 
@@ -718,8 +781,12 @@ function ResultReport() {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col span={16}>
-          <Card size="small" title="通过率趋势（近7天）">
-            <ReactECharts option={trendChartOption} style={{ height: 280 }} />
+          <Card size="small" title="通过率趋势">
+            {trendData.dates.length > 0 ? (
+              <ReactECharts option={trendChartOption} style={{ height: 280 }} />
+            ) : (
+              <Empty description="暂无执行数据" style={{ paddingTop: 60 }} />
+            )}
           </Card>
         </Col>
         <Col span={8}>
@@ -1191,7 +1258,7 @@ function ResultReport() {
                     size="small"
                     icon={<DownloadOutlined />}
                     onClick={() => {
-                      const content = `报告名称: ${item.title}\n生成时间: ${item.createdAt}\n项目: ${item.filters.projectName || '全部项目'}\n套件: ${item.filters.suiteName || '全部套件'}\n设备: ${item.filters.deviceName || '全部设备'}\n\n概览:\n- 总执行次数: ${item.summary.totalExecutions}\n- 总用例数: ${item.summary.totalCases}\n- 通过: ${item.summary.passedCases}\n- 失败: ${item.summary.failedCases}\n- 通过率: ${item.summary.passRate}%\n\n失败用例数: ${item.failedCaseRanking.length}\n关联缺陷数: ${item.relatedDefects.length}`
+                      const content = buildReportExportContent(item)
                       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
                       const url = URL.createObjectURL(blob)
                       const a = document.createElement('a')
@@ -1259,17 +1326,7 @@ function ResultReport() {
             icon={<DownloadOutlined />}
             onClick={() => {
               if (!viewingReport) return
-              const trendText = viewingReport.trendData
-                .map((t) => `${t.date}: 通过率${t.passRate}%, 执行${t.executionCount}次`)
-                .join('\n  ')
-              const failedText = viewingReport.failedCaseRanking
-                .map((f, i) => `${i + 1}. ${f.caseTitle} - 失败${f.failCount}次`)
-                .join('\n  ')
-              const defectText = viewingReport.relatedDefects
-                .map((d) => `${d.defectId} - ${d.title} [${d.status}]`)
-                .join('\n  ')
-
-              const content = `报告名称: ${viewingReport.title}\n生成时间: ${viewingReport.createdAt}\n类型: ${viewingReport.type === 'daily' ? '日报' : '执行报告'}\n\n筛选条件:\n  项目: ${viewingReport.filters.projectName || '全部项目'}\n  套件: ${viewingReport.filters.suiteName || '全部套件'}\n  设备: ${viewingReport.filters.deviceName || '全部设备'}\n  时间范围: ${viewingReport.filters.startDate || '不限'} ~ ${viewingReport.filters.endDate || '不限'}\n\n执行概览:\n  总执行次数: ${viewingReport.summary.totalExecutions}\n  总用例数: ${viewingReport.summary.totalCases}\n  通过用例: ${viewingReport.summary.passedCases}\n  失败用例: ${viewingReport.summary.failedCases}\n  通过率: ${viewingReport.summary.passRate}%\n\n通过率趋势:\n  ${trendText}\n\n失败用例排行:\n  ${failedText || '无'}\n\n关联缺陷:\n  ${defectText || '无'}\n`
+              const content = buildReportExportContent(viewingReport)
               const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a')

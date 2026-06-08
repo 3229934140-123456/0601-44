@@ -397,18 +397,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     const failedCases = filtered.reduce((sum, e) => sum + e.failedCases, 0)
     const passRate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0
 
-    const days = 7
-    const trendData: ReportTrendItem[] = []
-    for (let i = days - 1; i >= 0; i--) {
-      const date = dayjs().subtract(i, 'day')
-      const dateStr = date.format('MM-DD')
-      const dayExecs = filtered.filter((e) => dayjs(e.startTime).isSame(date, 'day'))
-      const count = dayExecs.length
-      const avgRate =
-        count > 0
-          ? Math.round(dayExecs.reduce((sum, e) => sum + e.passRate, 0) / count)
-          : 0
-      trendData.push({ date: dateStr, passRate: avgRate, executionCount: count })
+    let trendData: ReportTrendItem[] = []
+    if (filtered.length > 0) {
+      const sorted = [...filtered].sort(
+        (a, b) => dayjs(a.startTime).valueOf() - dayjs(b.startTime).valueOf()
+      )
+      const firstDate = dayjs(sorted[0].startTime).startOf('day')
+      const lastDate = dayjs(sorted[sorted.length - 1].startTime).startOf('day')
+      const totalDays = lastDate.diff(firstDate, 'day') + 1
+      const days = Math.min(totalDays, 30)
+      const startDate = totalDays > 30 ? lastDate.subtract(29, 'day') : firstDate
+
+      for (let i = 0; i < days; i++) {
+        const date = startDate.add(i, 'day')
+        const dateStr = date.format('MM-DD')
+        const dayExecs = filtered.filter((e) => dayjs(e.startTime).isSame(date, 'day'))
+        const count = dayExecs.length
+        const avgRate =
+          count > 0
+            ? Math.round(dayExecs.reduce((sum, e) => sum + e.passRate, 0) / count)
+            : 0
+        trendData.push({ date: dateStr, passRate: avgRate, executionCount: count })
+      }
     }
 
     const caseFailMap = new Map<
