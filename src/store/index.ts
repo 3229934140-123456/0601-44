@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
+import dayjs from 'dayjs'
 import type {
   TestCase,
   TestSuite,
@@ -14,6 +15,8 @@ import type {
   FailedCaseRank,
   FailureReasonItem,
   ReportRecord,
+  ReportTrendItem,
+  ReportFailedCase,
   ComparisonItem,
 } from '@/types'
 import {
@@ -95,6 +98,7 @@ interface AppState {
   reportRecords: ReportRecord[]
   addReportRecord: (record: Omit<ReportRecord, 'id' | 'createdAt'>) => ReportRecord
   deleteReportRecord: (id: string) => void
+  generateReport: (filters: ReportRecord['filters']) => Omit<ReportRecord, 'id' | 'createdAt'>
 
   setSelectedTags: (tags: string[]) => void
   setSearchKeyword: (keyword: string) => void
@@ -372,6 +376,136 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ reportRecords: newRecords })
   },
 
+  generateReport: (filters) => {
+    const { executions, cases, defects, projects, suites, devices } = get()
+
+    const filtered = executions.filter((e) => {
+      if (filters.projectId && e.projectId !== filters.projectId) return false
+      if (filters.suiteId && e.suiteId !== filters.suiteId) return false
+      if (filters.deviceId && e.deviceId !== filters.deviceId) return false
+      if (filters.startDate) {
+        if (dayjs(e.startTime).isBefore(dayjs(filters.startDate), 'day')) return false
+      }
+      if (filters.endDate) {
+        if (dayjs(e.startTime).isAfter(dayjs(filters.endDate), 'day')) return false
+      }
+      return true
+    })
+
+    const totalCases = filtered.reduce((sum, e) => sum + e.totalCases, 0)
+    const passedCases = filtered.reduce((sum, e) => sum + e.passedCases, 0)
+    const failedCases = filtered.reduce((sum, e) => sum + e.failedCases, 0)
+    const passRate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0
+
+    const days = 7
+    const trendData: ReportTrendItem[] = []
+    for (let i = days - 1; i >= 0; i--) {
+      const date = dayjs().subtract(i, 'day')
+      const dateStr = date.format('MM-DD')
+      const dayExecs = filtered.filter((e) => dayjs(e.startTime).isSame(date, 'day'))
+      const count = dayExecs.length
+      const avgRate =
+        count > 0
+          ? Math.round(dayExecs.reduce((sum, e) => sum + e.passRate, 0) / count)
+          : 0
+      trendData.push({ date: dateStr, passRate: avgRate, executionCount: count })
+    }
+
+    const caseFailMap = new Map<
+      string,
+      { title: string; module: string; failCount: number; totalCount: number; errorMsg?: string }
+    >()
+
+    filtered.forEach((exec) => {
+      exec.results.forEach((result) => {
+        const caseData = cases.find((c) => c.id === result.caseId)
+        if (!caseData) return
+        const existing = caseFailMap.get(result.caseId)
+        if (existing) {
+          existing.totalCount++
+          if (result.status === 'failed') {
+            existing.failCount++
+            if (!existing.errorMsg && result.errorMessage) {
+              existing.errorMsg = result.errorMessage
+            }
+          }
+        } else {
+          caseFailMap.set(result.caseId, {
+            title: caseData.title,
+            module: caseData.module,
+            failCount: result.status === 'failed' ? 1 : 0,
+            totalCount: 1,
+            errorMsg: result.status === 'failed' ? result.errorMessage : undefined,
+          })
+        }
+      })
+    })
+
+    const failedCaseRanking: ReportFailedCase[] = []
+    caseFailMap.forEach((value, key) => {
+      if (value.failCount > 0) {
+        const caseDefects = defects
+          .filter((d) => d.caseIds.includes(key))
+          .map((d) => ({ defectId: d.defectId, title: d.title, status: d.status }))
+
+        failedCaseRanking.push({
+          caseId: key,
+          caseTitle: value.title,
+          module: value.module,
+          failCount: value.failCount,
+          failRate: Math.round((value.failCount / value.totalCount) * 100),
+          errorMessage: value.errorMsg,
+          defects: caseDefects,
+        })
+      }
+    })
+    failedCaseRanking.sort((a, b) => b.failCount - a.failCount)
+
+    const failureReasons = get().getFailureReasons(filtered.map((e) => e.id))
+
+    const failedCaseIds = new Set(failedCaseRanking.map((c) => c.caseId))
+    const relatedDefects = defects
+      .filter((d) => d.caseIds.some((cid) => failedCaseIds.has(cid)))
+      .map((d) => ({
+        defectId: d.defectId,
+        title: d.title,
+        status: d.status,
+        severity: d.severity,
+      }))
+
+    const projectName = filters.projectId
+      ? projects.find((p) => p.id === filters.projectId)?.name || '全部项目'
+      : '全部项目'
+    const suiteName = filters.suiteId
+      ? suites.find((s) => s.id === filters.suiteId)?.name || '全部套件'
+      : '全部套件'
+    const deviceName = filters.deviceId
+      ? devices.find((d) => d.id === filters.deviceId)?.name || '全部设备'
+      : '全部设备'
+
+    return {
+      type: 'execution',
+      title: `${projectName} 测试报告`,
+      filters: {
+        ...filters,
+        projectName,
+        suiteName,
+        deviceName,
+      },
+      summary: {
+        totalExecutions: filtered.length,
+        totalCases,
+        passedCases,
+        failedCases,
+        passRate,
+      },
+      trendData,
+      failedCaseRanking,
+      failureReasons,
+      relatedDefects,
+    }
+  },
+
   setSelectedTags: (tags) => {
     set({ selectedTags: tags })
   },
@@ -455,16 +589,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     targetExecutions.forEach((exec) => {
       exec.results.forEach((result) => {
-        if (result.status === 'failed' && result.errorMessage) {
-          let reason = result.errorMessage
-          if (reason.includes('超时') || reason.includes('timeout')) reason = '超时等待'
-          else if (reason.includes('未找到') || reason.includes('not found')) reason = '元素未找到'
-          else if (reason.includes('断言') || reason.includes('assert')) reason = '断言失败'
-          else if (reason.includes('网络') || reason.includes('network')) reason = '网络异常'
-          else reason = '其他错误'
+        if (result.status === 'failed') {
+          result.stepResults.forEach((step) => {
+            if (step.status === 'failed' && step.errorMessage) {
+              let reason = step.errorMessage
+              if (reason.includes('超时') || reason.includes('timeout')) reason = '超时等待'
+              else if (reason.includes('未找到') || reason.includes('not found')) reason = '元素未找到'
+              else if (reason.includes('断言') || reason.includes('assert') || reason.includes('不符')) reason = '断言失败'
+              else if (reason.includes('网络') || reason.includes('network') || reason.includes('请求失败')) reason = '网络异常'
+              else reason = '其他错误'
 
-          const count = reasonMap.get(reason) || 0
-          reasonMap.set(reason, count + 1)
+              const count = reasonMap.get(reason) || 0
+              reasonMap.set(reason, count + 1)
+            }
+          })
         }
       })
     })
@@ -534,37 +672,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   generateDailyReport: (date) => {
-    const { executions, defects, addReportRecord } = get()
-    const dayExecutions = executions.filter((e) => e.startTime.startsWith(date))
-
-    const totalCases = dayExecutions.reduce((sum, e) => sum + e.totalCases, 0)
-    const totalPassed = dayExecutions.reduce((sum, e) => sum + e.passedCases, 0)
-    const totalFailed = dayExecutions.reduce((sum, e) => sum + e.failedCases, 0)
-    const passRate = totalCases > 0 ? Math.round((totalPassed / totalCases) * 100) : 0
-
-    const failedCaseSet = new Set<string>()
-    dayExecutions.forEach((e) => {
-      e.results.forEach((r) => {
-        if (r.status === 'failed') failedCaseSet.add(r.caseId)
-      })
+    const { generateReport, addReportRecord } = get()
+    const reportData = generateReport({
+      startDate: date,
+      endDate: date,
     })
-
-    const newDefects = defects.filter(
-      (d) => d.createdAt.startsWith(date) || d.updatedAt.startsWith(date)
-    ).length
-
-    const record = addReportRecord({
-      type: 'daily',
+    const dailyData = {
+      ...reportData,
+      type: 'daily' as const,
       title: `${date} 测试日报`,
-      summary: {
-        totalExecutions: dayExecutions.length,
-        totalCases,
-        passRate,
-        failedCases: failedCaseSet.size,
-      },
-      filters: { date },
-    })
-
+    }
+    const record = addReportRecord(dailyData)
     return record
   },
 }))

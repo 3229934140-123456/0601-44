@@ -33,6 +33,53 @@ export const mockSteps: TestStep[] = [
   },
 ]
 
+const caseStepMap: Record<string, TestStep[]> = {
+  c1: [
+    { id: 'c1-s1', order: 1, action: '打开登录页面', expected: '页面加载完成，显示登录表单' },
+    { id: 'c1-s2', order: 2, action: '输入用户名 testuser', expected: '用户名输入框显示 testuser' },
+    { id: 'c1-s3', order: 3, action: '输入密码 123456', expected: '密码输入框显示掩码' },
+    { id: 'c1-s4', order: 4, action: '点击登录按钮', expected: '成功跳转到首页，显示用户昵称' },
+  ],
+  c2: [
+    { id: 'c2-s1', order: 1, action: '打开注册页面', expected: '注册页面正常显示' },
+    { id: 'c2-s2', order: 2, action: '填写用户名、邮箱、手机号', expected: '表单填写完成' },
+    { id: 'c2-s3', order: 3, action: '获取验证码', expected: '验证码发送成功' },
+    { id: 'c2-s4', order: 4, action: '输入验证码并提交', expected: '注册成功，自动登录' },
+  ],
+  c3: [
+    { id: 'c3-s1', order: 1, action: '在搜索框输入关键词"手机"', expected: '搜索框显示"手机"' },
+    { id: 'c3-s2', order: 2, action: '点击搜索按钮', expected: '搜索结果页面加载完成' },
+    { id: 'c3-s3', order: 3, action: '验证搜索结果列表', expected: '列表项包含"手机"关键字，结果数大于0' },
+    { id: 'c3-s4', order: 4, action: '点击第一个搜索结果', expected: '成功进入商品详情页' },
+  ],
+  c4: [
+    { id: 'c4-s1', order: 1, action: '进入商品详情页', expected: '商品信息正常展示' },
+    { id: 'c4-s2', order: 2, action: '选择商品规格', expected: '规格选择完成，价格正确更新' },
+    { id: 'c4-s3', order: 3, action: '点击加入购物车按钮', expected: '提示"加入购物车成功"' },
+    { id: 'c4-s4', order: 4, action: '查看购物车', expected: '购物车中显示已添加的商品' },
+  ],
+  c5: [
+    { id: 'c5-s1', order: 1, action: '确认购物车商品', expected: '商品列表和金额显示正确' },
+    { id: 'c5-s2', order: 2, action: '选择收货地址', expected: '地址选择完成' },
+    { id: 'c5-s3', order: 3, action: '选择支付方式并提交订单', expected: '订单创建成功，跳转到支付页' },
+    { id: 'c5-s4', order: 4, action: '完成支付', expected: '支付成功，显示订单详情' },
+  ],
+  c6: [
+    { id: 'c6-s1', order: 1, action: '打开登录页面，点击"忘记密码"', expected: '跳转到密码找回页面' },
+    { id: 'c6-s2', order: 2, action: '输入注册邮箱', expected: '邮箱输入成功' },
+    { id: 'c6-s3', order: 3, action: '点击发送验证码', expected: '提示验证码已发送' },
+    { id: 'c6-s4', order: 4, action: '输入新密码并确认', expected: '密码修改成功，可使用新密码登录' },
+  ],
+}
+
+const failReasons = [
+  { reason: '元素未找到', detail: '等待超时，元素未出现在页面中' },
+  { reason: '超时等待', detail: '页面加载超过设置的超时时间' },
+  { reason: '断言失败', detail: '实际结果与预期不符' },
+  { reason: '网络异常', detail: '请求失败，网络连接异常' },
+  { reason: '其他错误', detail: '未捕获的脚本执行错误' },
+]
+
 export const mockCases: TestCase[] = [
   {
     id: 'c1',
@@ -126,6 +173,7 @@ export const mockCases: TestCase[] = [
 export const mockSuites: TestSuite[] = [
   {
     id: 'suite1',
+    projectId: 'proj1',
     name: '冒烟测试套件',
     description: '版本发布前的核心功能冒烟测试',
     caseIds: ['c1', 'c3', 'c5'],
@@ -134,6 +182,7 @@ export const mockSuites: TestSuite[] = [
   },
   {
     id: 'suite2',
+    projectId: 'proj1',
     name: '回归测试套件',
     description: '完整的回归测试用例集合',
     caseIds: ['c1', 'c2', 'c3', 'c4', 'c5'],
@@ -142,6 +191,7 @@ export const mockSuites: TestSuite[] = [
   },
   {
     id: 'suite3',
+    projectId: 'proj2',
     name: '用户模块专项测试',
     description: '用户相关功能的专项测试',
     caseIds: ['c1', 'c2', 'c6'],
@@ -249,26 +299,56 @@ export const mockDefects: Defect[] = [
   },
 ]
 
-const generateCaseResult = (caseId: string, caseTitle: string): CaseResult => {
-  const passed = Math.random() > 0.3
+const generateCaseResult = (
+  caseId: string,
+  caseTitle: string,
+  status?: 'passed' | 'failed' | 'skipped'
+): CaseResult => {
+  const finalStatus = status || (Math.random() > 0.3 ? 'passed' : 'failed')
+  const steps = caseStepMap[caseId] || mockSteps
+  const failReason = failReasons[Math.floor(Math.random() * failReasons.length)]
+
+  let failedStepIndex = -1
+  if (finalStatus === 'failed') {
+    failedStepIndex = Math.floor(Math.random() * steps.length)
+  }
+
+  const stepResults: TestStep[] = steps.map((step, idx) => ({
+    ...step,
+    status:
+      finalStatus === 'skipped'
+        ? 'skipped'
+        : finalStatus === 'passed'
+        ? 'passed'
+        : idx === failedStepIndex
+        ? 'failed'
+        : idx < failedStepIndex
+        ? 'passed'
+        : 'skipped',
+    duration: Math.floor(Math.random() * 3000) + 500,
+    errorMessage: idx === failedStepIndex && finalStatus === 'failed' ? failReason.detail : undefined,
+  }))
+
   return {
     caseId,
     caseTitle,
-    status: passed ? 'passed' : 'failed',
+    status: finalStatus,
     startTime: new Date(Date.now() - Math.random() * 300000).toISOString(),
-    endTime: new Date().toISOString(),
-    stepResults: mockSteps.map((s) => ({
-      ...s,
-      status: passed || Math.random() > 0.5 ? 'passed' : 'failed',
-      duration: Math.floor(Math.random() * 5000),
-    })),
-    errorMessage: passed ? undefined : '步骤执行失败，元素未找到',
+    endTime: finalStatus === 'skipped' ? undefined : new Date().toISOString(),
+    stepResults,
+    errorMessage:
+      finalStatus === 'failed'
+        ? failReason.detail
+        : finalStatus === 'skipped'
+        ? '跳过执行'
+        : undefined,
   }
 }
 
 export const mockExecutions: ExecutionRecord[] = [
   {
     id: 'exec1',
+    projectId: 'proj1',
     suiteId: 'suite1',
     suiteName: '冒烟测试套件',
     deviceId: 'dev1',
@@ -290,13 +370,14 @@ export const mockExecutions: ExecutionRecord[] = [
       { id: 'l6', timestamp: '09:15:30', level: 'info', message: '测试执行完成，通过率: 100%' },
     ],
     results: [
-      generateCaseResult('c1', '用户登录功能测试'),
-      generateCaseResult('c3', '商品搜索功能测试'),
-      generateCaseResult('c5', '支付流程测试'),
+      generateCaseResult('c1', '用户登录功能测试', 'passed'),
+      generateCaseResult('c3', '商品搜索功能测试', 'passed'),
+      generateCaseResult('c5', '支付流程测试', 'passed'),
     ],
   },
   {
     id: 'exec2',
+    projectId: 'proj1',
     suiteId: 'suite2',
     suiteName: '回归测试套件',
     deviceId: 'dev2',
@@ -319,10 +400,17 @@ export const mockExecutions: ExecutionRecord[] = [
       { id: 'l7', timestamp: '14:45:20', level: 'success', message: '支付流程测试 - 通过' },
       { id: 'l8', timestamp: '14:45:20', level: 'warn', message: '测试执行完成，通过率: 80%' },
     ],
-    results: [],
+    results: [
+      generateCaseResult('c1', '用户登录功能测试', 'passed'),
+      generateCaseResult('c2', '用户注册功能测试', 'passed'),
+      generateCaseResult('c3', '商品搜索功能测试', 'failed'),
+      generateCaseResult('c4', '购物车添加商品测试', 'passed'),
+      generateCaseResult('c5', '支付流程测试', 'passed'),
+    ],
   },
   {
     id: 'exec3',
+    projectId: 'proj1',
     suiteId: 'suite1',
     suiteName: '冒烟测试套件',
     deviceId: 'dev3',
@@ -336,10 +424,15 @@ export const mockExecutions: ExecutionRecord[] = [
     skippedCases: 1,
     passRate: 100,
     logs: [],
-    results: [],
+    results: [
+      generateCaseResult('c1', '用户登录功能测试', 'passed'),
+      generateCaseResult('c3', '商品搜索功能测试', 'skipped'),
+      generateCaseResult('c5', '支付流程测试', 'passed'),
+    ],
   },
   {
     id: 'exec4',
+    projectId: 'proj2',
     suiteId: 'suite3',
     suiteName: '用户模块专项测试',
     deviceId: 'dev1',
@@ -353,10 +446,15 @@ export const mockExecutions: ExecutionRecord[] = [
     skippedCases: 0,
     passRate: 100,
     logs: [],
-    results: [],
+    results: [
+      generateCaseResult('c1', '用户登录功能测试', 'passed'),
+      generateCaseResult('c2', '用户注册功能测试', 'passed'),
+      generateCaseResult('c6', '密码找回功能测试', 'passed'),
+    ],
   },
   {
     id: 'exec5',
+    projectId: 'proj1',
     suiteId: 'suite2',
     suiteName: '回归测试套件',
     deviceId: 'dev1',
@@ -370,7 +468,13 @@ export const mockExecutions: ExecutionRecord[] = [
     skippedCases: 0,
     passRate: 60,
     logs: [],
-    results: [],
+    results: [
+      generateCaseResult('c1', '用户登录功能测试', 'failed'),
+      generateCaseResult('c2', '用户注册功能测试', 'passed'),
+      generateCaseResult('c3', '商品搜索功能测试', 'failed'),
+      generateCaseResult('c4', '购物车添加商品测试', 'passed'),
+      generateCaseResult('c5', '支付流程测试', 'passed'),
+    ],
   },
 ]
 

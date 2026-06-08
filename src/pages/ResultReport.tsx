@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Card,
   Row,
@@ -65,6 +65,8 @@ function ResultReport() {
     compareExecutions,
     generateDailyReport,
     deleteReportRecord,
+    generateReport,
+    addReportRecord,
   } = useAppStore()
 
   const [selectedProject, setSelectedProject] = useState<string>('all')
@@ -86,8 +88,26 @@ function ResultReport() {
   const [dailyPreviewVisible, setDailyPreviewVisible] = useState(false)
   const [previewDate, setPreviewDate] = useState<string>('')
 
+  const [reportDetailVisible, setReportDetailVisible] = useState(false)
+  const [viewingReport, setViewingReport] = useState<ReportRecord | null>(null)
+
+  useEffect(() => {
+    if (selectedProject !== 'all') {
+      const projectSuiteIds = suites.filter((s) => s.projectId === selectedProject).map((s) => s.id)
+      if (selectedSuite !== 'all' && !projectSuiteIds.includes(selectedSuite)) {
+        setSelectedSuite('all')
+      }
+    }
+  }, [selectedProject, suites, selectedSuite])
+
+  const filteredSuites = useMemo(() => {
+    if (selectedProject === 'all') return suites
+    return suites.filter((s) => s.projectId === selectedProject)
+  }, [suites, selectedProject])
+
   const filteredExecutions = useMemo(() => {
     return executions.filter((e) => {
+      if (selectedProject !== 'all' && e.projectId !== selectedProject) return false
       if (selectedSuite !== 'all' && e.suiteId !== selectedSuite) return false
       if (selectedDevice !== 'all' && e.deviceId !== selectedDevice) return false
       if (dateRange && dateRange.length === 2) {
@@ -98,7 +118,7 @@ function ResultReport() {
       }
       return true
     })
-  }, [executions, selectedSuite, selectedDevice, dateRange])
+  }, [executions, selectedProject, selectedSuite, selectedDevice, dateRange])
 
   const filteredExecutionIds = filteredExecutions.map((e) => e.id)
 
@@ -267,8 +287,16 @@ function ResultReport() {
   }
 
   const handleExportReport = () => {
-    const reportTitle = `测试报告_${dayjs().format('YYYYMMDD_HHmmss')}`
-    message.success(`报告已导出：${reportTitle}.csv`)
+    const filters: ReportRecord['filters'] = {
+      projectId: selectedProject === 'all' ? undefined : selectedProject,
+      suiteId: selectedSuite === 'all' ? undefined : selectedSuite,
+      deviceId: selectedDevice === 'all' ? undefined : selectedDevice,
+      startDate: dateRange?.[0]?.format('YYYY-MM-DD'),
+      endDate: dateRange?.[1]?.format('YYYY-MM-DD'),
+    }
+    const reportData = generateReport(filters)
+    const newRecord = addReportRecord(reportData)
+    message.success(`报告已生成：${newRecord.title}`)
   }
 
   const handleCompare = () => {
@@ -589,7 +617,7 @@ function ResultReport() {
             placeholder="选择套件"
           >
             <Option value="all">全部套件</Option>
-            {suites.map((s) => (
+            {filteredSuites.map((s) => (
               <Option key={s.id} value={s.id}>
                 {s.name}
               </Option>
@@ -1147,10 +1175,33 @@ function ResultReport() {
             renderItem={(item: ReportRecord) => (
               <List.Item
                 actions={[
-                  <Button type="link" size="small" icon={<EyeOutlined />}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => {
+                      setViewingReport(item)
+                      setReportDetailVisible(true)
+                    }}
+                  >
                     查看
                   </Button>,
-                  <Button type="link" size="small" icon={<DownloadOutlined />}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    onClick={() => {
+                      const content = `报告名称: ${item.title}\n生成时间: ${item.createdAt}\n项目: ${item.filters.projectName || '全部项目'}\n套件: ${item.filters.suiteName || '全部套件'}\n设备: ${item.filters.deviceName || '全部设备'}\n\n概览:\n- 总执行次数: ${item.summary.totalExecutions}\n- 总用例数: ${item.summary.totalCases}\n- 通过: ${item.summary.passedCases}\n- 失败: ${item.summary.failedCases}\n- 通过率: ${item.summary.passRate}%\n\n失败用例数: ${item.failedCaseRanking.length}\n关联缺陷数: ${item.relatedDefects.length}`
+                      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `${item.title}.txt`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                      message.success('导出成功')
+                    }}
+                  >
                     导出
                   </Button>,
                   <Popconfirm
@@ -1194,6 +1245,290 @@ function ResultReport() {
           />
         ) : (
           <Empty description="暂无报告记录" />
+        )}
+      </Modal>
+
+      <Modal
+        title="报告详情"
+        open={reportDetailVisible}
+        onCancel={() => setReportDetailVisible(false)}
+        width={1000}
+        footer={[
+          <Button
+            key="export"
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              if (!viewingReport) return
+              const trendText = viewingReport.trendData
+                .map((t) => `${t.date}: 通过率${t.passRate}%, 执行${t.executionCount}次`)
+                .join('\n  ')
+              const failedText = viewingReport.failedCaseRanking
+                .map((f, i) => `${i + 1}. ${f.caseTitle} - 失败${f.failCount}次`)
+                .join('\n  ')
+              const defectText = viewingReport.relatedDefects
+                .map((d) => `${d.defectId} - ${d.title} [${d.status}]`)
+                .join('\n  ')
+
+              const content = `报告名称: ${viewingReport.title}\n生成时间: ${viewingReport.createdAt}\n类型: ${viewingReport.type === 'daily' ? '日报' : '执行报告'}\n\n筛选条件:\n  项目: ${viewingReport.filters.projectName || '全部项目'}\n  套件: ${viewingReport.filters.suiteName || '全部套件'}\n  设备: ${viewingReport.filters.deviceName || '全部设备'}\n  时间范围: ${viewingReport.filters.startDate || '不限'} ~ ${viewingReport.filters.endDate || '不限'}\n\n执行概览:\n  总执行次数: ${viewingReport.summary.totalExecutions}\n  总用例数: ${viewingReport.summary.totalCases}\n  通过用例: ${viewingReport.summary.passedCases}\n  失败用例: ${viewingReport.summary.failedCases}\n  通过率: ${viewingReport.summary.passRate}%\n\n通过率趋势:\n  ${trendText}\n\n失败用例排行:\n  ${failedText || '无'}\n\n关联缺陷:\n  ${defectText || '无'}\n`
+              const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `${viewingReport.title}.txt`
+              a.click()
+              URL.revokeObjectURL(url)
+              message.success('导出成功')
+            }}
+          >
+            导出报告
+          </Button>,
+          <Button key="close" onClick={() => setReportDetailVisible(false)}>
+            关闭
+          </Button>,
+        ]}
+      >
+        {viewingReport && (
+          <div>
+            <Card size="small" style={{ marginBottom: 16 }}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <div>
+                  <Text type="secondary">报告标题：</Text>
+                  <Text strong>{viewingReport.title}</Text>
+                </div>
+                <div>
+                  <Text type="secondary">生成时间：</Text>
+                  {viewingReport.createdAt}
+                </div>
+                <div>
+                  <Text type="secondary">筛选条件：</Text>
+                  <Space wrap style={{ marginLeft: 8 }}>
+                    <Tag color="blue">{viewingReport.filters.projectName || '全部项目'}</Tag>
+                    <Tag color="green">{viewingReport.filters.suiteName || '全部套件'}</Tag>
+                    <Tag color="orange">{viewingReport.filters.deviceName || '全部设备'}</Tag>
+                    {viewingReport.filters.startDate && (
+                      <Tag>
+                        {viewingReport.filters.startDate} ~ {viewingReport.filters.endDate}
+                      </Tag>
+                    )}
+                  </Space>
+                </div>
+              </Space>
+            </Card>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+              <Col span={6}>
+                <Card>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 600 }}>
+                      {viewingReport.summary.totalExecutions}
+                    </div>
+                    <div style={{ color: '#8c8c8c' }}>总执行次数</div>
+                  </div>
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 600, color: '#52c41a' }}>
+                      {viewingReport.summary.passedCases}
+                    </div>
+                    <div style={{ color: '#8c8c8c' }}>通过用例</div>
+                  </div>
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <div style={{ textAlign: 'center' }}>
+                    <div
+                      style={{
+                        fontSize: 24,
+                        fontWeight: 600,
+                        color:
+                          viewingReport.summary.passRate >= 80 ? '#52c41a' : '#faad14',
+                      }}
+                    >
+                      {viewingReport.summary.passRate}%
+                    </div>
+                    <div style={{ color: '#8c8c8c' }}>通过率</div>
+                  </div>
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 600, color: '#ff4d4f' }}>
+                      {viewingReport.summary.failedCases}
+                    </div>
+                    <div style={{ color: '#8c8c8c' }}>失败用例</div>
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+              <Col span={16}>
+                <Card size="small" title="通过率趋势">
+                  <ReactECharts
+                    option={{
+                      tooltip: { trigger: 'axis' },
+                      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+                      xAxis: {
+                        type: 'category',
+                        data: viewingReport.trendData.map((t) => t.date),
+                      },
+                      yAxis: {
+                        type: 'value',
+                        max: 100,
+                        axisLabel: { formatter: '{value}%' },
+                      },
+                      series: [
+                        {
+                          type: 'line',
+                          smooth: true,
+                          data: viewingReport.trendData.map((t) => t.passRate),
+                          areaStyle: {
+                            color: {
+                              type: 'linear',
+                              x: 0, y: 0, x2: 0, y2: 1,
+                              colorStops: [
+                                { offset: 0, color: 'rgba(22, 119, 255, 0.3)' },
+                                { offset: 1, color: 'rgba(22, 119, 255, 0.05)' },
+                              ],
+                            },
+                          },
+                          lineStyle: { color: '#1677ff', width: 2 },
+                          itemStyle: { color: '#1677ff' },
+                        },
+                      ],
+                    }}
+                    style={{ height: 220 }}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card size="small" title="失败原因分布">
+                  {viewingReport.failureReasons.length > 0 ? (
+                    <ReactECharts
+                      option={{
+                        tooltip: { trigger: 'item', formatter: '{b}: {c}次 ({d}%)' },
+                        legend: { orient: 'vertical', right: 5, top: 'center', textStyle: { fontSize: 11 } },
+                        series: [
+                          {
+                            type: 'pie',
+                            radius: ['50%', '70%'],
+                            center: ['30%', '50%'],
+                            label: { show: false },
+                            data: viewingReport.failureReasons.map((r, idx) => ({
+                              value: r.count,
+                              name: r.reason,
+                              itemStyle: {
+                                color: ['#ff4d4f', '#faad14', '#722ed1', '#13c2c2', '#8c8c8c'][
+                                  idx % 5
+                                ],
+                              },
+                            })),
+                          },
+                        ],
+                      }}
+                      style={{ height: 220 }}
+                    />
+                  ) : (
+                    <Empty
+                      description="暂无失败数据"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      style={{ paddingTop: 50 }}
+                    />
+                  )}
+                </Card>
+              </Col>
+            </Row>
+
+            <Card size="small" title="失败用例明细" style={{ marginBottom: 16 }}>
+              {viewingReport.failedCaseRanking.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={viewingReport.failedCaseRanking.slice(0, 10)}
+                  renderItem={(item, index) => (
+                    <List.Item style={{ padding: '8px 0' }}>
+                      <Space style={{ width: '100%' }} align="start">
+                        <Tag color={index < 3 ? 'red' : 'default'} style={{ minWidth: 28, textAlign: 'center' }}>
+                          {index + 1}
+                        </Tag>
+                        <div style={{ flex: 1 }}>
+                          <div>
+                            <Text strong>{item.caseTitle}</Text>
+                            <Tag color="blue" style={{ marginLeft: 8 }}>
+                              {item.module}
+                            </Tag>
+                          </div>
+                          {item.errorMessage && (
+                            <div style={{ fontSize: 12, color: '#ff4d4f', marginTop: 4 }}>
+                              错误：{item.errorMessage}
+                            </div>
+                          )}
+                          {item.defects && item.defects.length > 0 && (
+                            <div style={{ marginTop: 4 }}>
+                              {item.defects.map((d) => (
+                                <Tag key={d.defectId} color="red" style={{ fontSize: 11 }}>
+                                  <BugOutlined /> {d.defectId} ({d.status})
+                                </Tag>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <Text type="danger">
+                            失败 {item.failCount} 次
+                          </Text>
+                          <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                            失败率 {item.failRate}%
+                          </div>
+                        </div>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <Empty description="无失败用例" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )}
+            </Card>
+
+            <Card size="small" title="关联缺陷">
+              {viewingReport.relatedDefects.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={viewingReport.relatedDefects}
+                  renderItem={(item) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<BugOutlined style={{ color: '#ff4d4f', fontSize: 18 }} />}
+                        title={
+                          <Space>
+                            <Text strong>{item.defectId}</Text>
+                            <Tag
+                              color={
+                                item.status === 'open'
+                                  ? 'red'
+                                  : item.status === 'fixed'
+                                  ? 'green'
+                                  : 'default'
+                              }
+                            >
+                              {item.status === 'open' ? '待修复' : item.status === 'fixed' ? '已修复' : item.status}
+                            </Tag>
+                            <Tag color="orange">{item.severity}</Tag>
+                          </Space>
+                        }
+                        description={item.title}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <Empty description="无关联缺陷" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )}
+            </Card>
+          </div>
         )}
       </Modal>
     </div>

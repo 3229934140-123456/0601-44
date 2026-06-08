@@ -96,6 +96,7 @@ function ExecutionControl() {
     if (!suite || !device) return
 
     const executionId = addExecution({
+      projectId: suite.projectId,
       suiteId: selectedSuiteId,
       suiteName: suite.name,
       deviceId: selectedDeviceId,

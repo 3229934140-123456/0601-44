@@ -24,6 +24,7 @@ export interface TestCase {
 
 export interface TestSuite {
   id: string
+  projectId: string
   name: string
   description: string
   caseIds: string[]
@@ -46,6 +47,7 @@ export interface Device {
 
 export interface ExecutionRecord {
   id: string
+  projectId: string
   suiteId: string
   suiteName: string
   deviceId: string
@@ -136,18 +138,48 @@ export interface FailureReasonItem {
   count: number
 }
 
+export interface ReportTrendItem {
+  date: string
+  passRate: number
+  executionCount: number
+}
+
+export interface ReportFailedCase {
+  caseId: string
+  caseTitle: string
+  module: string
+  failCount: number
+  failRate: number
+  errorMessage?: string
+  defects: { defectId: string; title: string; status: string }[]
+}
+
 export interface ReportRecord {
   id: string
   type: 'daily' | 'execution'
   title: string
   createdAt: string
-  filters?: Record<string, unknown>
-  summary?: {
+  filters: {
+    projectId?: string
+    projectName?: string
+    suiteId?: string
+    suiteName?: string
+    deviceId?: string
+    deviceName?: string
+    startDate?: string
+    endDate?: string
+  }
+  summary: {
     totalExecutions: number
     totalCases: number
-    passRate: number
+    passedCases: number
     failedCases: number
+    passRate: number
   }
+  trendData: ReportTrendItem[]
+  failedCaseRanking: ReportFailedCase[]
+  failureReasons: { reason: string; count: number }[]
+  relatedDefects: { defectId: string; title: string; status: string; severity: string }[]
 }
 
 export interface ComparisonItem {
