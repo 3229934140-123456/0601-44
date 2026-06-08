@@ -108,7 +108,8 @@ export interface ProjectSettings {
   reportPath: string
   scheduleEnabled: boolean
   scheduleTime?: string
-  scheduleCron?: string
+  schedulePeriod?: 'daily' | 'weekly' | 'monthly'
+  scheduleSuiteIds?: string[]
 }
 
 export interface DailyReport {
@@ -119,4 +120,43 @@ export interface DailyReport {
   failedCases: string[]
   newDefects: number
   fixedDefects: number
+}
+
+export interface FailedCaseRank {
+  caseId: string
+  caseTitle: string
+  module: string
+  failCount: number
+  totalCount: number
+  failRate: number
+}
+
+export interface FailureReasonItem {
+  reason: string
+  count: number
+}
+
+export interface ReportRecord {
+  id: string
+  type: 'daily' | 'execution'
+  title: string
+  createdAt: string
+  filters?: Record<string, unknown>
+  summary?: {
+    totalExecutions: number
+    totalCases: number
+    passRate: number
+    failedCases: number
+  }
+}
+
+export interface ComparisonItem {
+  caseId: string
+  caseTitle: string
+  baseStatus: 'passed' | 'failed' | 'skipped'
+  targetStatus: 'passed' | 'failed' | 'skipped'
+  baseDuration?: number
+  targetDuration?: number
+  changeType: 'passed_to_failed' | 'failed_to_passed' | 'slower' | 'faster' | 'unchanged'
+  defects?: { id: string; defectId: string; status: string; title: string }[]
 }

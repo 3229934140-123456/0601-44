@@ -32,7 +32,7 @@ const { Text } = Typography
 const { Option } = Select
 
 function RunSettings() {
-  const { projects, currentProjectId, updateProjectSettings, addProject, setCurrentProject, deleteProject } =
+  const { projects, currentProjectId, suites, updateProjectSettings, addProject, setCurrentProject, deleteProject } =
     useAppStore()
 
   const [form] = Form.useForm()
@@ -53,6 +53,9 @@ function RunSettings() {
         screenshotOnFailure: currentProject.settings.screenshotOnFailure,
         reportPath: currentProject.settings.reportPath,
         scheduleEnabled: currentProject.settings.scheduleEnabled,
+        scheduleTime: currentProject.settings.scheduleTime,
+        schedulePeriod: currentProject.settings.schedulePeriod,
+        scheduleSuiteIds: currentProject.settings.scheduleSuiteIds,
       })
       setIsDirty(false)
     }
@@ -117,6 +120,8 @@ function RunSettings() {
     }
     message.success('删除成功')
   }
+
+  const scheduleEnabled = Form.useWatch('scheduleEnabled', form)
 
   return (
     <div>
@@ -232,19 +237,30 @@ function RunSettings() {
 
               <Row gutter={16}>
                 <Col span={12}>
-                  <Form.Item label="执行时间">
-                    <Select defaultValue="09:00">
+                  <Form.Item
+                    name="scheduleTime"
+                    label="执行时间"
+                    rules={[{ required: scheduleEnabled, message: '请选择执行时间' }]}
+                  >
+                    <Select disabled={!scheduleEnabled} placeholder="选择执行时间">
+                      <Option value="06:00">06:00</Option>
                       <Option value="08:00">08:00</Option>
+                      <Option value="08:30">08:30</Option>
                       <Option value="09:00">09:00</Option>
                       <Option value="12:00">12:00</Option>
                       <Option value="18:00">18:00</Option>
                       <Option value="21:00">21:00</Option>
+                      <Option value="22:00">22:00</Option>
                     </Select>
                   </Form.Item>
                 </Col>
                 <Col span={12}>
-                  <Form.Item label="执行周期">
-                    <Select defaultValue="daily">
+                  <Form.Item
+                    name="schedulePeriod"
+                    label="执行周期"
+                    rules={[{ required: scheduleEnabled, message: '请选择执行周期' }]}
+                  >
+                    <Select disabled={!scheduleEnabled} placeholder="选择执行周期">
                       <Option value="daily">每天</Option>
                       <Option value="weekly">每周</Option>
                       <Option value="monthly">每月</Option>
@@ -253,29 +269,46 @@ function RunSettings() {
                 </Col>
               </Row>
 
-              <Form.Item label="执行套件">
-                <Select mode="multiple" placeholder="选择要定时执行的测试套件">
-                  <Option value="suite1">冒烟测试套件</Option>
-                  <Option value="suite2">回归测试套件</Option>
-                  <Option value="suite3">用户模块专项测试</Option>
+              <Form.Item
+                name="scheduleSuiteIds"
+                label="执行套件"
+                rules={[{ required: scheduleEnabled, message: '请选择执行套件' }]}
+              >
+                <Select
+                  mode="multiple"
+                  placeholder="选择要定时执行的测试套件"
+                  disabled={!scheduleEnabled}
+                >
+                  {suites.map((s) => (
+                    <Option key={s.id} value={s.id}>
+                      {s.name}
+                    </Option>
+                  ))}
                 </Select>
               </Form.Item>
 
-              <div
-                style={{
-                  padding: 12,
-                  background: '#f6ffed',
-                  border: '1px solid #b7eb8f',
-                  borderRadius: 6,
-                }}
-              >
-                <Space>
-                  <ClockCircleOutlined style={{ color: '#52c41a' }} />
-                  <Text type="success">
-                    下次执行时间：{dayjs().add(1, 'day').format('YYYY-MM-DD')} 09:00:00（每天）
-                  </Text>
-                </Space>
-              </div>
+              {scheduleEnabled && currentProject?.settings.scheduleTime && (
+                <div
+                  style={{
+                    padding: 12,
+                    background: '#f6ffed',
+                    border: '1px solid #b7eb8f',
+                    borderRadius: 6,
+                  }}
+                >
+                  <Space>
+                    <ClockCircleOutlined style={{ color: '#52c41a' }} />
+                    <Text type="success">
+                      下次执行时间：{dayjs().add(1, 'day').format('YYYY-MM-DD')}{' '}
+                      {currentProject.settings.scheduleTime}（
+                      {{ daily: '每天', weekly: '每周', monthly: '每月' }[
+                        currentProject.settings.schedulePeriod || 'daily'
+                      ]}
+                      ）
+                    </Text>
+                  </Space>
+                </div>
+              )}
             </Form>
           </Card>
         </Col>
@@ -285,7 +318,12 @@ function RunSettings() {
             size="small"
             title="项目列表"
             extra={
-              <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => setAddModalVisible(true)}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() => setAddModalVisible(true)}
+              >
                 新建
               </Button>
             }
@@ -302,7 +340,9 @@ function RunSettings() {
                     marginBottom: 4,
                     cursor: 'pointer',
                     border:
-                      item.id === currentProjectId ? '1px solid #1677ff' : '1px solid transparent',
+                      item.id === currentProjectId
+                        ? '1px solid #1677ff'
+                        : '1px solid transparent',
                   }}
                   onClick={() => handleSwitchProject(item.id)}
                   actions={[
@@ -328,6 +368,11 @@ function RunSettings() {
                         {item.id === currentProjectId && (
                           <Tag color="blue" style={{ margin: 0 }}>
                             当前
+                          </Tag>
+                        )}
+                        {item.settings.scheduleEnabled && (
+                          <Tag color="green" style={{ margin: 0 }}>
+                            定时中
                           </Tag>
                         )}
                       </Space>

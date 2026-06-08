@@ -289,15 +289,15 @@ function ExecutionControl() {
 
     const rerunNextCase = () => {
       if (index >= failedResults.length) {
-        const passed = record.passedCases + rerunPassed
-        const failed = record.failedCases - rerunFailed + (failedResults.length - rerunPassed)
+        const newPassed = record.passedCases + rerunPassed
+        const newFailed = record.failedCases - rerunPassed
         const total = record.totalCases
-        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0
-        const newStatus = failed === 0 ? 'passed' : 'failed'
+        const passRate = total > 0 ? Math.round((newPassed / total) * 100) : 0
+        const newStatus: 'passed' | 'failed' = newFailed === 0 ? 'passed' : 'failed'
 
         updateExecution(record.id, {
-          passedCases: passed,
-          failedCases: failed,
+          passedCases: newPassed,
+          failedCases: newFailed,
           passRate,
           status: newStatus,
           endTime: new Date().toLocaleString(),
@@ -466,11 +466,14 @@ function ExecutionControl() {
         const total = newPassed + newFailed + exec.skippedCases
         const passRate = total > 0 ? Math.round((newPassed / total) * 100) : 0
 
+        const newStatus: 'passed' | 'failed' = newFailed === 0 ? 'passed' : 'failed'
+
         updateExecution(record.id, {
           passedCases: newPassed,
           failedCases: newFailed,
           passRate,
-          status: newFailed === 0 ? 'passed' : 'failed',
+          status: newStatus,
+          endTime: new Date().toLocaleString(),
         })
       }
 

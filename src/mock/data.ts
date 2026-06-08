@@ -383,17 +383,35 @@ export const defaultProjectSettings: ProjectSettings = {
   screenshotOnFailure: true,
   reportPath: './reports',
   scheduleEnabled: false,
+  scheduleTime: '09:00',
+  schedulePeriod: 'daily',
+  scheduleSuiteIds: [],
 }
 
 export const mockProjects: Project[] = [
   {
     id: 'proj1',
     name: '电商平台测试项目',
-    settings: { ...defaultProjectSettings, baseUrl: 'http://shop.example.com' },
+    settings: {
+      ...defaultProjectSettings,
+      baseUrl: 'http://shop.example.com',
+      scheduleEnabled: true,
+      scheduleTime: '21:00',
+      schedulePeriod: 'daily',
+      scheduleSuiteIds: ['suite1', 'suite2'],
+    },
   },
   {
     id: 'proj2',
     name: 'OA系统测试项目',
-    settings: { ...defaultProjectSettings, baseUrl: 'http://oa.example.com', timeout: 60000 },
+    settings: {
+      ...defaultProjectSettings,
+      baseUrl: 'http://oa.example.com',
+      timeout: 60000,
+      scheduleEnabled: false,
+      scheduleTime: '08:30',
+      schedulePeriod: 'weekly',
+      scheduleSuiteIds: ['suite3'],
+    },
   },
 ]
